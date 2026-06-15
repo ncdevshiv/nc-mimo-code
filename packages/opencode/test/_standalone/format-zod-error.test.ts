@@ -56,7 +56,7 @@ describe("formatZodError", () => {
     const result = schema.safeParse({ format: "xml" })
     if (result.success) throw new Error("expected failure")
     const out = formatZodError({ format: { type: "enum", values: ["text", "markdown", "html"] } })(result.error)
-    expect(out).toContain("format: Invalid option: expected one of")
+    expect(out).toContain("is not one of")
     expect(out).toContain("text")
     expect(out).toContain("markdown")
     expect(out).toContain("html")

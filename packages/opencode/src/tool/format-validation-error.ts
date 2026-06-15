@@ -12,13 +12,6 @@
 
 import z from "zod"
 
-/**
- * One-line description of a schema field, used by `formatZodError` to
- * give the model a recovery hint when its input fails validation. The
- * `type` is a human-readable shape (`"string"`, `"number"`, `"boolean"`,
- * `"object"`, `"array of string"`, etc.). The `required` flag tells the
- * model whether omitting the field is allowed.
- */
 export interface FieldHint {
   type: string
   required?: boolean
@@ -26,32 +19,6 @@ export interface FieldHint {
   note?: string
 }
 
-/**
- * Build a model-readable `formatValidationError` for a tool whose
- * schema is a plain `z.object(...)` (no `strictObject` and no
- * discriminated-union envelope). The default ZodError stringification
- * dumps the full issues array, which is verbose and unfriendly for an
- * LLM that needs to recover. This formatter:
- *
- *   - lists every issue, with the dotted path and what was wrong
- *   - shows the expected type and (for enums) the allowed values
- *   - shows the "required keys" summary so the model can see at a
- *     glance what it's missing
- *   - caps per-issue verbosity by using short labels
- *
- * Pass `hints` to teach the formatter about the tool's fields. Keys
- * are the schema field names; values are `FieldHint` describing the
- * expected type. Without hints, the formatter still works but the
- * model only sees the path + code (less helpful for picking the
- * right shape).
- *
- * Intended to be passed as `Tool.Def.formatValidationError`:
- *   parameters,
- *   formatValidationError: formatZodError({
- *     command: { type: "string", required: true },
- *     timeout: { type: "number", required: false },
- *   }),
- */
 export function formatZodError(
   hints: Record<string, FieldHint> = {},
 ): (error: z.ZodError) => string {
@@ -59,50 +26,74 @@ export function formatZodError(
     const lines: string[] = []
     lines.push("Your call did not match the expected schema. Details:")
     for (const issue of error.issues) {
-      const path = issue.path.length > 0 ? issue.path.join(".") : "(root)"
-      const hint = path === "(root)" ? undefined : hints[issue.path[0]!]
+      // Cast to a permissive shape because zod 4 renamed several
+      // issue codes (`invalid_string` -> `invalid_format`,
+      // `invalid_enum_value` -> `invalid_value`) and the field
+      // names on the issue objects (`received` -> `input`). The
+      // runtime values are correct; we just lose compile-time
+      // narrowing on the discriminator.
+      const i = issue as unknown as {
+        code: string
+        path: ReadonlyArray<PropertyKey>
+        message: string
+        keys?: string[]
+        expected?: string
+        input?: unknown
+        received?: unknown
+        inclusive?: boolean
+        minimum?: number | bigint
+        maximum?: number | bigint
+        options?: ReadonlyArray<unknown>
+        [k: string]: unknown
+      }
+      const path = i.path.length > 0 ? i.path.map(String).join(".") : "(root)"
+      const firstKey = i.path.length > 0 ? String(i.path[0]) : undefined
+      const hint = firstKey === undefined ? undefined : hints[firstKey]
       const typeHint = hint ? ` (expected ${hint.type})` : ""
       const valuesHint =
         hint?.values && hint.values.length > 0
           ? ` (one of: ${hint.values.map((v) => `"${v}"`).join(", ")})`
           : ""
       const noteHint = hint?.note ? ` — ${hint.note}` : ""
-      switch (issue.code) {
+      const received = "input" in i ? i.input : "received" in i ? i.received : undefined
+      switch (i.code) {
         case "unrecognized_keys":
           lines.push(
-            `  - ${path}: unknown key(s): ${(issue.keys as string[]).map((k) => `"${k}"`).join(", ")}.${noteHint}`,
+            `  - ${path}: unknown key(s): ${((i.keys as string[] | undefined) ?? []).map((k) => `"${k}"`).join(", ")}.${noteHint}`,
           )
           break
         case "invalid_type":
           lines.push(
-            `  - ${path}: got ${JSON.stringify(issue.received)}, expected ${issue.expected}${typeHint}.${noteHint}`,
+            `  - ${path}: got ${JSON.stringify(received)}, expected ${i.expected ?? "unknown"}${typeHint}.${noteHint}`,
           )
           break
         case "invalid_string":
+        case "invalid_format":
           lines.push(
-            `  - ${path}: ${issue.message}${typeHint}${valuesHint}.${noteHint}`,
+            `  - ${path}: ${i.message}${typeHint}${valuesHint}.${noteHint}`,
           )
           break
         case "too_small":
           lines.push(
-            `  - ${path}: must be ${issue.inclusive ? ">=" : ">"} ${issue.minimum}${hint ? ` (${hint.type})` : ""}.${noteHint}`,
+            `  - ${path}: must be ${i.inclusive ? ">=" : ">"} ${String(i.minimum)}${hint ? ` (${hint.type})` : ""}.${noteHint}`,
           )
           break
         case "too_big":
           lines.push(
-            `  - ${path}: must be ${issue.inclusive ? "<=" : "<"} ${issue.maximum}${hint ? ` (${hint.type})` : ""}.${noteHint}`,
+            `  - ${path}: must be ${i.inclusive ? "<=" : "<"} ${String(i.maximum)}${hint ? ` (${hint.type})` : ""}.${noteHint}`,
           )
           break
         case "invalid_enum_value":
+        case "invalid_value":
           lines.push(
-            `  - ${path}: "${issue.received}" is not one of ${issue.options.map((o) => `"${o}"`).join(", ")}${valuesHint}.${noteHint}`,
+            `  - ${path}: ${JSON.stringify(received)} is not one of ${((i.options as ReadonlyArray<unknown> | undefined) ?? []).map((o) => `"${String(o)}"`).join(", ")}${valuesHint}.${noteHint}`,
           )
           break
         case "custom":
-          lines.push(`  - ${path}: ${issue.message}${noteHint}`)
+          lines.push(`  - ${path}: ${i.message}${noteHint}`)
           break
         default:
-          lines.push(`  - ${path}: ${issue.message}${typeHint}${noteHint}`)
+          lines.push(`  - ${path}: ${i.message}${typeHint}${noteHint}`)
       }
     }
     const requiredFields = Object.entries(hints)
@@ -116,19 +107,6 @@ export function formatZodError(
   }
 }
 
-/**
- * Build a model-readable `formatValidationError` for a tool whose
- * schema is a `z.strictObject({ operation: z.discriminatedUnion("action", [...]) })`
- * — the shape used by task, actor, and workflow. The default ZodError
- * stringification dumps the full issues array (e.g. "unrecognized_keys: ..."
- * for every leaked top-level key), which is verbose and unfriendly for an
- * LLM that needs to recover. This formatter extracts the unrecognized keys,
- * lists the accepted actions, and shows a minimal example.
- *
- * Intended to be passed as `Tool.Def.formatValidationError`:
- *   parameters,
- *   formatValidationError: formatDiscriminatedUnionError(["create","list",...]),
- */
 export function formatDiscriminatedUnionError(
   actions: readonly string[],
 ): (error: z.ZodError) => string {
@@ -136,10 +114,11 @@ export function formatDiscriminatedUnionError(
     const unknown = new Set<string>()
     let discriminatorMissing = false
     for (const issue of error.issues) {
-      if (issue.code === "unrecognized_keys") {
-        for (const k of issue.keys) unknown.add(k)
+      const i = issue as unknown as { code: string; path: ReadonlyArray<PropertyKey>; [k: string]: unknown }
+      if (i.code === "unrecognized_keys") {
+        for (const k of (i.keys as string[] | undefined) ?? []) unknown.add(k)
       }
-      if (issue.code === "invalid_type" && issue.path.length === 0) {
+      if (i.code === "invalid_type" && i.path.length === 0) {
         discriminatorMissing = true
       }
     }

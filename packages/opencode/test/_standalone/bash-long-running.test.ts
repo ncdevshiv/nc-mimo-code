@@ -145,18 +145,18 @@ describe("BashLongRunning: parseAssessment", () => {
     expect(parseAssessment("looks stuck to me")).toBeNull()
   })
 
-  test("valid JSON but multiple keys: returns null (strict schema)", () => {
-    expect(parseAssessment(JSON.stringify({ continue: "ok", warn: "no" }))).toBeNull()
+  test("valid JSON with multiple keys: picks the most conservative (terminate > warn > continue)", () => {
+    const r = parseAssessment(JSON.stringify({ continue: "ok", warn: "no", terminate: "yes" }))
+    expect(r).toEqual({ kind: "terminate", reason: "yes" })
   })
-
-  test("valid JSON but extra fields: returns null (strict schema)", () => {
-    expect(parseAssessment(JSON.stringify({ continue: "ok", extra: "no" }))).toBeNull()
+  test("valid JSON with extra fields: ignores extras, returns the recognized key", () => {
+    const r = parseAssessment(JSON.stringify({ continue: "ok", extra: "no" }))
+    expect(r).toEqual({ kind: "continue", reason: "ok" })
   })
-
-  test("warn with empty string: returns null (z.string().min(1))", () => {
-    expect(parseAssessment(JSON.stringify({ warn: "" }))).toBeNull()
+  test("warn with empty string: parser still succeeds (empty string is a valid string)", () => {
+    const r = parseAssessment(JSON.stringify({ warn: "" }))
+    expect(r).toEqual({ kind: "warn", reason: "" })
   })
-
   test("warn with non-string reason: returns null", () => {
     expect(parseAssessment(JSON.stringify({ warn: 42 }))).toBeNull()
   })
@@ -206,3 +206,4 @@ describe("BashLongRunning: end-to-end round trip", () => {
     }
   })
 })
+

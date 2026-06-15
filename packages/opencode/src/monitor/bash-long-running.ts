@@ -102,11 +102,16 @@ export function buildAssessmentSystemPrompt(): string {
   return ASSESSMENT_SYSTEM_PROMPT
 }
 
-const AssessmentResponse = z.union([
-  z.strictObject({ continue: z.string().optional() }),
-  z.strictObject({ warn: z.string().min(1) }),
-  z.strictObject({ terminate: z.string().min(1) }),
-])
+// Use a less-strict schema that zod 4 narrows cleanly. The
+// discriminator is the presence of the `continue`, `warn`, or
+// `terminate` key. The exact shape (zod 4 issue with z.strictObject
+// unions and keyof narrowing) is handled by a single object
+// schema with optional fields and runtime property checks below.
+const AssessmentResponse = z.object({
+  continue: z.string().optional(),
+  warn: z.string().optional(),
+  terminate: z.string().optional(),
+})
 
 export function parseAssessment(output: string): Assessment | null {
   if (typeof output !== "string" || output.length === 0) return null
@@ -125,11 +130,23 @@ export function parseAssessment(output: string): Assessment | null {
   const result = AssessmentResponse.safeParse(parsed)
   if (!result.success) return null
 
-  if ("continue" in result.data) {
-    return { kind: "continue", reason: result.data.continue }
+  // Pick the first present discriminator key. Exactly one of
+  // `continue`, `warn`, `terminate` is expected; if multiple are
+  // present, prefer terminate > warn > continue (the more
+  // conservative action wins).
+  const data = result.data as {
+    continue?: string
+    warn?: string
+    terminate?: string
   }
-  if ("warn" in result.data) {
-    return { kind: "warn", reason: result.data.warn }
+  if (data.terminate !== undefined) {
+    return { kind: "terminate", reason: data.terminate }
   }
-  return { kind: "terminate", reason: result.data.terminate }
+  if (data.warn !== undefined) {
+    return { kind: "warn", reason: data.warn }
+  }
+  if (data.continue !== undefined) {
+    return { kind: "continue", reason: data.continue }
+  }
+  return null
 }
