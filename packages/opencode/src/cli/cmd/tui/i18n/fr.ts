@@ -104,9 +104,9 @@ export const dict = {
   "tui.tips.cycle_sessions":
     "Appuyez sur {highlight}Ctrl+X Right/Left{/highlight} pour parcourir les sessions parent et enfant",
   "tui.tips.config_files":
-    "Créez {highlight}mimocode.json{/highlight} pour la configuration serveur et {highlight}tui.json{/highlight} pour le TUI",
+    "Créez {highlight}nc-mimo-code.json{/highlight} pour la configuration serveur et {highlight}tui.json{/highlight} pour le TUI",
   "tui.tips.global_config":
-    "Placez les paramètres TUI dans {highlight}~/.config/mimocode/tui.json{/highlight} comme configuration globale",
+    "Placez les paramètres TUI dans {highlight}~/.config/nc-mimo-code/tui.json{/highlight} comme configuration globale",
   "tui.tips.schema": "Ajoutez {highlight}$schema{/highlight} à votre config pour l'auto-complétion dans l'éditeur",
   "tui.tips.default_model": "Configurez {highlight}model{/highlight} dans la config pour définir le modèle par défaut",
   "tui.tips.keybinds":
@@ -116,15 +116,15 @@ export const dict = {
   "tui.tips.mcp_config":
     "Configurez les serveurs MCP locaux ou distants dans la section {highlight}mcp{/highlight}",
   "tui.tips.mcp_oauth":
-    "MiMoCode gère automatiquement OAuth pour les serveurs MCP distants nécessitant une authentification",
+    "NcMimoCode gère automatiquement OAuth pour les serveurs MCP distants nécessitant une authentification",
   "tui.tips.custom_command":
-    "Ajoutez des fichiers {highlight}.md{/highlight} dans {highlight}.mimocode/command/{/highlight} pour définir des invites personnalisées réutilisables",
+    "Ajoutez des fichiers {highlight}.md{/highlight} dans {highlight}.nc-mimo-code/command/{/highlight} pour définir des invites personnalisées réutilisables",
   "tui.tips.command_args":
     "Utilisez {highlight}$ARGUMENTS{/highlight}, {highlight}$1{/highlight}, {highlight}$2{/highlight} dans les commandes pour des entrées dynamiques",
   "tui.tips.command_backticks":
     "Utilisez des backticks dans les commandes pour injecter la sortie shell (ex. {highlight}`git status`{/highlight})",
   "tui.tips.custom_agent":
-    "Ajoutez des fichiers {highlight}.md{/highlight} dans {highlight}.mimocode/agent/{/highlight} pour des personas IA spécialisés",
+    "Ajoutez des fichiers {highlight}.md{/highlight} dans {highlight}.nc-mimo-code/agent/{/highlight} pour des personas IA spécialisés",
   "tui.tips.agent_perms":
     "Configurez par agent les permissions des outils {highlight}edit{/highlight}, {highlight}bash{/highlight} et {highlight}webfetch{/highlight}",
   "tui.tips.bash_allow":
@@ -133,45 +133,45 @@ export const dict = {
     'Définissez {highlight}"rm -rf *": "deny"{/highlight} pour bloquer les commandes destructrices',
   "tui.tips.bash_ask":
     'Configurez {highlight}"git push": "ask"{/highlight} pour exiger une confirmation avant le push',
-  "tui.tips.formatter": "MiMoCode formate automatiquement les fichiers avec prettier, gofmt, ruff, etc.",
+  "tui.tips.formatter": "NcMimoCode formate automatiquement les fichiers avec prettier, gofmt, ruff, etc.",
   "tui.tips.disable_formatter":
     'Définissez {highlight}"formatter": false{/highlight} dans la config pour désactiver le formatage automatique',
   "tui.tips.custom_formatter":
     "Définissez des commandes de formatage personnalisées par extension de fichier dans la config",
-  "tui.tips.lsp": "MiMoCode utilise des serveurs LSP pour une analyse de code intelligente",
+  "tui.tips.lsp": "NcMimoCode utilise des serveurs LSP pour une analyse de code intelligente",
   "tui.tips.custom_tool":
-    "Créez des fichiers {highlight}.ts{/highlight} dans {highlight}.mimocode/tools/{/highlight} pour définir de nouveaux outils LLM",
+    "Créez des fichiers {highlight}.ts{/highlight} dans {highlight}.nc-mimo-code/tools/{/highlight} pour définir de nouveaux outils LLM",
   "tui.tips.tool_scripts": "Les définitions d'outils peuvent invoquer des scripts en Python, Go, etc.",
   "tui.tips.plugins":
-    "Ajoutez des fichiers {highlight}.ts{/highlight} dans {highlight}.mimocode/plugin/{/highlight} pour des hooks d'événements",
+    "Ajoutez des fichiers {highlight}.ts{/highlight} dans {highlight}.nc-mimo-code/plugin/{/highlight} pour des hooks d'événements",
   "tui.tips.plugin_notify":
     "Utilisez des plugins pour envoyer des notifications système à la fin des sessions",
   "tui.tips.plugin_protect":
-    "Créez un plugin pour empêcher MiMoCode de lire des fichiers sensibles",
-  "tui.tips.run": "Utilisez {highlight}mimo run{/highlight} pour des scripts non interactifs",
-  "tui.tips.continue": "Utilisez {highlight}mimo --continue{/highlight} pour reprendre la dernière session",
+    "Créez un plugin pour empêcher NcMimoCode de lire des fichiers sensibles",
+  "tui.tips.run": "Utilisez {highlight}ncmimocode run{/highlight} pour des scripts non interactifs",
+  "tui.tips.continue": "Utilisez {highlight}ncmimocode --continue{/highlight} pour reprendre la dernière session",
   "tui.tips.attach_cli":
-    "Utilisez {highlight}mimo run -f file.ts{/highlight} pour joindre des fichiers via la CLI",
+    "Utilisez {highlight}ncmimocode run -f file.ts{/highlight} pour joindre des fichiers via la CLI",
   "tui.tips.format_json":
     "Utilisez {highlight}--format json{/highlight} pour une sortie lisible par machine dans les scripts",
-  "tui.tips.serve": "Exécutez {highlight}mimo serve{/highlight} pour exposer l'API MiMoCode en mode headless",
+  "tui.tips.serve": "Exécutez {highlight}ncmimocode serve{/highlight} pour exposer l'API NcMimoCode en mode headless",
   "tui.tips.attach_server":
-    "Utilisez {highlight}mimo run --attach{/highlight} pour vous connecter à un serveur en cours",
-  "tui.tips.upgrade": "Exécutez {highlight}mimo upgrade{/highlight} pour passer à la dernière version",
+    "Utilisez {highlight}ncmimocode run --attach{/highlight} pour vous connecter à un serveur en cours",
+  "tui.tips.upgrade": "Exécutez {highlight}ncmimocode upgrade{/highlight} pour passer à la dernière version",
   "tui.tips.auth_list":
-    "Exécutez {highlight}mimo auth list{/highlight} pour voir tous les fournisseurs configurés",
+    "Exécutez {highlight}ncmimocode auth list{/highlight} pour voir tous les fournisseurs configurés",
   "tui.tips.agent_create":
-    "Exécutez {highlight}mimo agent create{/highlight} pour créer un agent en mode guidé",
+    "Exécutez {highlight}ncmimocode agent create{/highlight} pour créer un agent en mode guidé",
   "tui.tips.github_trigger":
     "Utilisez {highlight}/opencode{/highlight} dans les issues/PR GitHub pour déclencher des actions IA",
   "tui.tips.github_install":
-    "Exécutez {highlight}mimo github install{/highlight} pour configurer le workflow GitHub",
+    "Exécutez {highlight}ncmimocode github install{/highlight} pour configurer le workflow GitHub",
   "tui.tips.github_oc":
     "Commentez {highlight}/oc{/highlight} sur une ligne de PR pour une revue ciblée",
   "tui.tips.theme_system":
     'Utilisez {highlight}"theme": "system"{/highlight} pour suivre les couleurs du terminal',
   "tui.tips.theme_files":
-    "Créez des fichiers de thème JSON dans le dossier {highlight}.mimocode/themes/{/highlight}",
+    "Créez des fichiers de thème JSON dans le dossier {highlight}.nc-mimo-code/themes/{/highlight}",
   "tui.tips.theme_variants": "Les thèmes prennent en charge des variantes claires/sombres pour les deux modes",
   "tui.tips.theme_ansi": "Référencez les couleurs ANSI 0-255 dans des thèmes personnalisés",
   "tui.tips.env_var":
@@ -201,7 +201,7 @@ export const dict = {
   "tui.tips.external_dir":
     "La permission {highlight}external_directory{/highlight} protège les fichiers en dehors du projet",
   "tui.tips.debug_config":
-    "Exécutez {highlight}mimo debug config{/highlight} pour diagnostiquer la configuration",
+    "Exécutez {highlight}ncmimocode debug config{/highlight} pour diagnostiquer la configuration",
   "tui.tips.print_logs":
     "Utilisez l'option {highlight}--print-logs{/highlight} pour afficher des journaux détaillés sur stderr",
   "tui.tips.timeline":

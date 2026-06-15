@@ -108,9 +108,9 @@ export const dict = {
   "tui.tips.cycle_sessions":
     "Нажимайте {highlight}Ctrl+X Right/Left{/highlight}, чтобы переключаться между родительской и дочерними сессиями",
   "tui.tips.config_files":
-    "Создайте {highlight}mimocode.json{/highlight} для серверных настроек и {highlight}tui.json{/highlight} для настроек TUI",
+    "Создайте {highlight}nc-mimo-code.json{/highlight} для серверных настроек и {highlight}tui.json{/highlight} для настроек TUI",
   "tui.tips.global_config":
-    "Поместите настройки TUI в {highlight}~/.config/mimocode/tui.json{/highlight} как глобальные",
+    "Поместите настройки TUI в {highlight}~/.config/nc-mimo-code/tui.json{/highlight} как глобальные",
   "tui.tips.schema":
     "Добавьте {highlight}$schema{/highlight} в конфиг для автодополнения в редакторе",
   "tui.tips.default_model":
@@ -122,15 +122,15 @@ export const dict = {
   "tui.tips.mcp_config":
     "Настройте локальные или удалённые MCP-серверы в разделе {highlight}mcp{/highlight} конфига",
   "tui.tips.mcp_oauth":
-    "MiMoCode автоматически обрабатывает OAuth для удалённых MCP-серверов с авторизацией",
+    "NcMimoCode автоматически обрабатывает OAuth для удалённых MCP-серверов с авторизацией",
   "tui.tips.custom_command":
-    "Добавляйте файлы {highlight}.md{/highlight} в {highlight}.mimocode/command/{/highlight} для повторно используемых пользовательских команд",
+    "Добавляйте файлы {highlight}.md{/highlight} в {highlight}.nc-mimo-code/command/{/highlight} для повторно используемых пользовательских команд",
   "tui.tips.command_args":
     "Используйте {highlight}$ARGUMENTS{/highlight}, {highlight}$1{/highlight}, {highlight}$2{/highlight} в командах для динамического ввода",
   "tui.tips.command_backticks":
     "Используйте обратные кавычки в командах, чтобы вставить вывод shell (например, {highlight}`git status`{/highlight})",
   "tui.tips.custom_agent":
-    "Добавляйте файлы {highlight}.md{/highlight} в {highlight}.mimocode/agent/{/highlight} для специализированных AI-персон",
+    "Добавляйте файлы {highlight}.md{/highlight} в {highlight}.nc-mimo-code/agent/{/highlight} для специализированных AI-персон",
   "tui.tips.agent_perms":
     "Настройте для каждого агента отдельные права на инструменты {highlight}edit{/highlight}, {highlight}bash{/highlight} и {highlight}webfetch{/highlight}",
   "tui.tips.bash_allow":
@@ -140,50 +140,50 @@ export const dict = {
   "tui.tips.bash_ask":
     'Настройте {highlight}"git push": "ask"{/highlight}, чтобы запрашивать подтверждение перед push',
   "tui.tips.formatter":
-    "MiMoCode автоматически форматирует файлы с помощью prettier, gofmt, ruff и других инструментов",
+    "NcMimoCode автоматически форматирует файлы с помощью prettier, gofmt, ruff и других инструментов",
   "tui.tips.disable_formatter":
     'Установите {highlight}"formatter": false{/highlight}, чтобы отключить всё авто-форматирование',
   "tui.tips.custom_formatter":
     "Определяйте собственные команды форматирования по расширениям файлов в конфиге",
-  "tui.tips.lsp": "MiMoCode использует LSP-серверы для интеллектуального анализа кода",
+  "tui.tips.lsp": "NcMimoCode использует LSP-серверы для интеллектуального анализа кода",
   "tui.tips.custom_tool":
-    "Создавайте файлы {highlight}.ts{/highlight} в {highlight}.mimocode/tools/{/highlight}, чтобы определить новые LLM-инструменты",
+    "Создавайте файлы {highlight}.ts{/highlight} в {highlight}.nc-mimo-code/tools/{/highlight}, чтобы определить новые LLM-инструменты",
   "tui.tips.tool_scripts":
     "Определения инструментов могут вызывать скрипты на Python, Go и других языках",
   "tui.tips.plugins":
-    "Добавляйте файлы {highlight}.ts{/highlight} в {highlight}.mimocode/plugin/{/highlight} для подключения хуков событий",
+    "Добавляйте файлы {highlight}.ts{/highlight} в {highlight}.nc-mimo-code/plugin/{/highlight} для подключения хуков событий",
   "tui.tips.plugin_notify":
     "Используйте плагины, чтобы отправлять системные уведомления при завершении сессий",
   "tui.tips.plugin_protect":
-    "Создайте плагин, который запретит MiMoCode читать чувствительные файлы",
+    "Создайте плагин, который запретит NcMimoCode читать чувствительные файлы",
   "tui.tips.run":
-    "Используйте {highlight}mimo run{/highlight} для неинтерактивных скриптов",
+    "Используйте {highlight}ncmimocode run{/highlight} для неинтерактивных скриптов",
   "tui.tips.continue":
-    "Используйте {highlight}mimo --continue{/highlight}, чтобы продолжить последнюю сессию",
+    "Используйте {highlight}ncmimocode --continue{/highlight}, чтобы продолжить последнюю сессию",
   "tui.tips.attach_cli":
-    "Используйте {highlight}mimo run -f file.ts{/highlight}, чтобы прикрепить файлы из командной строки",
+    "Используйте {highlight}ncmimocode run -f file.ts{/highlight}, чтобы прикрепить файлы из командной строки",
   "tui.tips.format_json":
     "Используйте {highlight}--format json{/highlight} для машинно-читаемого вывода в скриптах",
   "tui.tips.serve":
-    "Запустите {highlight}mimo serve{/highlight} для headless-доступа к API MiMoCode",
+    "Запустите {highlight}ncmimocode serve{/highlight} для headless-доступа к API NcMimoCode",
   "tui.tips.attach_server":
-    "Используйте {highlight}mimo run --attach{/highlight}, чтобы подключиться к запущенному серверу",
+    "Используйте {highlight}ncmimocode run --attach{/highlight}, чтобы подключиться к запущенному серверу",
   "tui.tips.upgrade":
-    "Выполните {highlight}mimo upgrade{/highlight}, чтобы обновиться до последней версии",
+    "Выполните {highlight}ncmimocode upgrade{/highlight}, чтобы обновиться до последней версии",
   "tui.tips.auth_list":
-    "Выполните {highlight}mimo auth list{/highlight}, чтобы увидеть всех настроенных провайдеров",
+    "Выполните {highlight}ncmimocode auth list{/highlight}, чтобы увидеть всех настроенных провайдеров",
   "tui.tips.agent_create":
-    "Выполните {highlight}mimo agent create{/highlight}, чтобы создать агента в пошаговом режиме",
+    "Выполните {highlight}ncmimocode agent create{/highlight}, чтобы создать агента в пошаговом режиме",
   "tui.tips.github_trigger":
     "Используйте {highlight}/opencode{/highlight} в issue/PR на GitHub, чтобы запускать AI-действия",
   "tui.tips.github_install":
-    "Выполните {highlight}mimo github install{/highlight}, чтобы настроить GitHub-workflow",
+    "Выполните {highlight}ncmimocode github install{/highlight}, чтобы настроить GitHub-workflow",
   "tui.tips.github_oc":
     "Оставьте {highlight}/oc{/highlight} в комментарии к строке PR для точечного код-ревью",
   "tui.tips.theme_system":
     'Используйте {highlight}"theme": "system"{/highlight}, чтобы соответствовать цветам терминала',
   "tui.tips.theme_files":
-    "Создавайте JSON-файлы тем в каталоге {highlight}.mimocode/themes/{/highlight}",
+    "Создавайте JSON-файлы тем в каталоге {highlight}.nc-mimo-code/themes/{/highlight}",
   "tui.tips.theme_variants":
     "Темы поддерживают тёмные и светлые варианты для обоих режимов",
   "tui.tips.theme_ansi": "Ссылайтесь на ANSI-цвета 0-255 в собственных темах",
@@ -214,7 +214,7 @@ export const dict = {
   "tui.tips.external_dir":
     "Разрешение {highlight}external_directory{/highlight} защищает файлы вне проекта",
   "tui.tips.debug_config":
-    "Выполните {highlight}mimo debug config{/highlight}, чтобы диагностировать проблемы конфигурации",
+    "Выполните {highlight}ncmimocode debug config{/highlight}, чтобы диагностировать проблемы конфигурации",
   "tui.tips.print_logs":
     "Используйте флаг {highlight}--print-logs{/highlight}, чтобы видеть подробные логи в stderr",
   "tui.tips.timeline":
