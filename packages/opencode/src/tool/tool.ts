@@ -14,6 +14,49 @@ export interface Metadata {
 // TODO: remove this hack
 export type DynamicDescription = (agent: Agent.Info) => Effect.Effect<string>
 
+/**
+ * Build a model-readable `formatValidationError` for a tool whose schema is a
+ * `z.strictObject({ operation: z.discriminatedUnion("action", [...]) })` —
+ * the shape used by task, actor, and workflow. The default ZodError
+ * stringification dumps the full issues array (e.g. "unrecognized_keys: ..."
+ * for every leaked top-level key), which is verbose and unfriendly for an
+ * LLM that needs to recover. This formatter extracts the unrecognized keys,
+ * lists the accepted actions, and shows a minimal example.
+ *
+ * Intended to be passed as `Tool.Def.formatValidationError`:
+ *   parameters,
+ *   formatValidationError: formatDiscriminatedUnionError(["create","list",...]),
+ */
+export function formatDiscriminatedUnionError(actions: readonly string[]): (error: z.ZodError) => string {
+  return (error) => {
+    const unknown = new Set<string>()
+    let discriminatorMissing = false
+    for (const issue of error.issues) {
+      if (issue.code === "unrecognized_keys") {
+        for (const k of issue.keys) unknown.add(k)
+      }
+      if (issue.code === "invalid_type" && issue.path.length === 0) {
+        discriminatorMissing = true
+      }
+    }
+    const lines: string[] = []
+    lines.push(`Schema accepts exactly one "operation" key, whose value is an object with an "action" discriminator.`)
+    lines.push(`Accepted actions: ${actions.join(" | ")}.`)
+    if (unknown.size > 0) {
+      const list = Array.from(unknown)
+        .map((k) => `"${k}"`)
+        .join(", ")
+      lines.push(`Unknown top-level keys in your call: ${list}.`)
+    }
+    if (discriminatorMissing) {
+      lines.push(`Your call is missing the required "operation" object.`)
+    }
+    const example = JSON.stringify({ operation: { action: actions[0] } })
+    lines.push(`Example of a valid call: ${example}`)
+    return lines.join("\n")
+  }
+}
+
 export type Context<M extends Metadata = Metadata> = {
   sessionID: SessionID
   messageID: MessageID

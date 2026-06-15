@@ -742,6 +742,14 @@ export const ActorTool = Tool.define(
       return {
         description: DESCRIPTION,
         parameters,
+        formatValidationError: Tool.formatDiscriminatedUnionError([
+          "run",
+          "spawn",
+          "status",
+          "wait",
+          "cancel",
+          "send",
+        ]),
         execute: (input: z.infer<typeof parameters>, ctx: Tool.Context) => run(input, ctx).pipe(Effect.orDie),
         shell: {
           description: SHELL_DESCRIPTION,

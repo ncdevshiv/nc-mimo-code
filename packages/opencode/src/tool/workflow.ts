@@ -158,6 +158,7 @@ export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Serv
     return {
       description: DESCRIPTION,
       parameters,
+      formatValidationError: Tool.formatDiscriminatedUnionError(["run", "status", "wait", "cancel", "resume"]),
       execute: (input: z.infer<typeof parameters>, ctx: Tool.Context<Metadata>) => run(input, ctx).pipe(Effect.orDie),
     } satisfies Tool.DefWithoutID<typeof parameters, Metadata>
   }),

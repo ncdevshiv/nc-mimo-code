@@ -395,6 +395,17 @@ export const TaskTool = Tool.define<typeof parameters, Metadata, TaskRegistry.Se
     return {
       description: DESCRIPTION,
       parameters,
+      formatValidationError: Tool.formatDiscriminatedUnionError([
+        "create",
+        "list",
+        "get",
+        "start",
+        "block",
+        "unblock",
+        "done",
+        "abandon",
+        "rename",
+      ]),
       execute: (args: z.infer<typeof parameters>, ctx: Tool.Context<Metadata>) =>
         run(args, ctx).pipe(Effect.orDie),
       shell: {
