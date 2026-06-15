@@ -1,4 +1,4 @@
-import type { FileNode } from "@mimo-ai/sdk/v2"
+import type { FileNode } from "@nc-mimo-code/sdk/v2"
 
 type WatcherEvent = {
   type: string
