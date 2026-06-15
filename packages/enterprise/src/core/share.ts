@@ -1,6 +1,6 @@
-import { Message, Model, Part, Session, SnapshotFileDiff } from "@mimo-ai/sdk/v2"
-import { fn } from "@mimo-ai/shared/util/fn"
-import { iife } from "@mimo-ai/shared/util/iife"
+import { Message, Model, Part, Session, SnapshotFileDiff } from "@nc-mimo-code/sdk/v2"
+import { fn } from "@nc-mimo-code/shared/util/fn"
+import { iife } from "@nc-mimo-code/shared/util/iife"
 import z from "zod"
 import { Storage } from "./storage"
 

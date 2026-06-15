@@ -1,4 +1,4 @@
-import type { Hooks, PluginInput } from "@mimo-ai/plugin"
+import type { Hooks, PluginInput } from "@nc-mimo-code/plugin"
 import { Log } from "../util"
 import { createServer } from "http"
 import crypto from "crypto"

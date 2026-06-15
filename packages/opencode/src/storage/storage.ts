@@ -1,9 +1,9 @@
 import { Log } from "../util"
 import path from "path"
 import { Global } from "../global"
-import { NamedError } from "@mimo-ai/shared/util/error"
+import { NamedError } from "@nc-mimo-code/shared/util/error"
 import z from "zod"
-import { AppFileSystem } from "@mimo-ai/shared/filesystem"
+import { AppFileSystem } from "@nc-mimo-code/shared/filesystem"
 import { Effect, Exit, Layer, Option, RcMap, Schema, Context, TxReentrantLock } from "effect"
 import { Git } from "@/git"
 

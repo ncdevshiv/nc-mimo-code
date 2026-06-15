@@ -2,7 +2,7 @@ import path from "path"
 import { Effect, Layer, Record, Result, Schema, Context } from "effect"
 import { zod } from "@/util/effect-zod"
 import { Global } from "../global"
-import { AppFileSystem } from "@mimo-ai/shared/filesystem"
+import { AppFileSystem } from "@nc-mimo-code/shared/filesystem"
 
 export const OAUTH_DUMMY_KEY = "mimocode-oauth-dummy-key"
 

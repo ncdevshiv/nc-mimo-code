@@ -1,4 +1,4 @@
-import { createOpencodeClient } from "@mimo-ai/sdk/v2/client"
+import { createOpencodeClient } from "@nc-mimo-code/sdk/v2/client"
 import type { ServerConnection } from "@/context/server"
 
 export function createSdkForServer({

@@ -29,7 +29,7 @@ NcMimoCode 是一个终端原生的 AI 编程助手。它能读写代码、执�
 curl -fsSL https://mimo.xiaomi.com/install | bash
 
 # 或通过 npm 安装
-npm install -g @mimo-ai/cli
+npm install -g @nc-mimo-code/cli
 ```
 
 首次启动自动引导配置。支持：

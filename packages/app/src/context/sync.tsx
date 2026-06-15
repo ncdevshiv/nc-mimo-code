@@ -1,8 +1,8 @@
 import { batch, createMemo } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
-import { Binary } from "@mimo-ai/shared/util/binary"
-import { retry } from "@mimo-ai/shared/util/retry"
-import { createSimpleContext } from "@mimo-ai/ui/context"
+import { Binary } from "@nc-mimo-code/shared/util/binary"
+import { retry } from "@nc-mimo-code/shared/util/retry"
+import { createSimpleContext } from "@nc-mimo-code/ui/context"
 import {
   clearSessionPrefetch,
   getSessionPrefetch,
@@ -11,7 +11,7 @@ import {
 } from "./global-sync/session-prefetch"
 import { useGlobalSync } from "./global-sync"
 import { useSDK } from "./sdk"
-import type { Message, Part } from "@mimo-ai/sdk/v2/client"
+import type { Message, Part } from "@nc-mimo-code/sdk/v2/client"
 import { SESSION_CACHE_LIMIT, dropSessionCaches, pickSessionCacheEvictions } from "./global-sync/session-cache"
 import { diffs as list, message as clean } from "@/utils/diffs"
 

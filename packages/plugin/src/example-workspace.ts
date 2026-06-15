@@ -1,4 +1,4 @@
-import type { Plugin } from "@mimo-ai/plugin"
+import type { Plugin } from "@nc-mimo-code/plugin"
 import { mkdir, rm } from "node:fs/promises"
 
 export const FolderWorkspacePlugin: Plugin = async ({ experimental_workspace }) => {

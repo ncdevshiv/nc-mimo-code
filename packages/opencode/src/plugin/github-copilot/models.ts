@@ -1,5 +1,5 @@
 import { z } from "zod"
-import type { Model } from "@mimo-ai/sdk/v2"
+import type { Model } from "@nc-mimo-code/sdk/v2"
 
 export const schema = z.object({
   data: z.array(

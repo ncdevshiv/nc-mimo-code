@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { fn } from "./util/fn"
-import { Resource } from "@mimo-ai/console-resource"
+import { Resource } from "@nc-mimo-code/console-resource"
 import { BlackPlans } from "./schema/billing.sql"
 import { Subscription } from "./subscription"
 

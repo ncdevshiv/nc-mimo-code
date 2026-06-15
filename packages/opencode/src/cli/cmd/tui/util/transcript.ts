@@ -1,4 +1,4 @@
-import type { AssistantMessage, Part, Provider, UserMessage } from "@mimo-ai/sdk/v2"
+import type { AssistantMessage, Part, Provider, UserMessage } from "@nc-mimo-code/sdk/v2"
 import { Locale } from "@/util"
 import * as Model from "./model"
 

@@ -1,4 +1,4 @@
-import { Resource } from "@mimo-ai/console-resource"
+import { Resource } from "@nc-mimo-code/console-resource"
 import type { TraceItem } from "@cloudflare/workers-types"
 
 export default {
