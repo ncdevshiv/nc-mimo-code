@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package",
-  "name": "@mimo-ai/script",
+  "name": "@nc-mimo-code/script",
   "license": "MIT",
   "publishConfig": {
     "access": "public"
