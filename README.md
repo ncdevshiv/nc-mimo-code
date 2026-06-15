@@ -1,7 +1,7 @@
-<h1 align="center">MiMoCode</h1>
+<h1 align="center">NcMimoCode</h1>
 
 <p align="center">
-  <img src="assets/readme/mimocode-banner.png" alt="MiMoCode" width="700">
+  <img src="assets/readme/nc-mimo-code-banner.png" alt="NcMimoCode" width="700">
 </p>
 
 <p align="center"><strong>An open-source AI coding agent with cross-session memory.</strong></p>
@@ -16,9 +16,9 @@
 
 ---
 
-MiMoCode is a terminal-native AI coding assistant. It can read and write code, run commands, manage Git, and use a persistent memory system to keep a deep understanding of your project across sessions while continuously improving itself.
+NcMimoCode is a terminal-native AI coding assistant. It can read and write code, run commands, manage Git, and use a persistent memory system to keep a deep understanding of your project across sessions while continuously improving itself.
 
-MiMo Auto is built in as a free-for-limited-time channel, so you can start with zero configuration. MiMoCode also supports connecting to any mainstream LLM provider API.
+MiMo Auto is built in as a free-for-limited-time channel, so you can start with zero configuration. NcMimoCode also supports connecting to any mainstream LLM provider API.
 
 ---
 
@@ -29,7 +29,7 @@ MiMo Auto is built in as a free-for-limited-time channel, so you can start with 
 curl -fsSL https://mimo.xiaomi.com/install | bash
 
 # Or install via npm
-npm install -g @mimo-ai/cli
+npm install -g @nc-mimo-code/cli
 ```
 
 The first launch guides you through configuration automatically. Supported options:
@@ -98,7 +98,7 @@ Real-time streaming voice input powered by TenVAD and MiMo ASR. Activate with `/
 
 ## Configuration
 
-MiMoCode is configured via `.mimocode/mimocode.json` in the project directory (or `~/.config/mimocode/mimocode.json` globally). Key options include:
+NcMimoCode is configured via `.nc-mimo-code/nc-mimo-code.json` in the project directory (or `~/.config/nc-mimo-code/nc-mimo-code.json` globally). Key options include:
 
 - Provider and model selection
 - Agent permissions and custom agents
@@ -122,7 +122,7 @@ bun turbo typecheck      # Type check
 
 ## Relationship to OpenCode
 
-MiMoCode is built as a fork of [OpenCode](https://github.com/anomalyco/opencode). It keeps all core OpenCode capabilities (multiple providers, TUI, LSP, MCP, plugins) and adds persistent memory, intelligent context management, subagent orchestration, goal-driven autonomous loops, compose workflows, and self-improvement via dream/distill.
+NcMimoCode is built as a fork of [OpenCode](https://github.com/anomalyco/opencode). It keeps all core OpenCode capabilities (multiple providers, TUI, LSP, MCP, plugins) and adds persistent memory, intelligent context management, subagent orchestration, goal-driven autonomous loops, compose workflows, and self-improvement via dream/distill.
 
 ---
 
@@ -142,6 +142,6 @@ Scan the QR code to join the community group chat:
 
 Source code is licensed under the [MIT License](./LICENSE).
 
-Use of MiMoCode is also subject to the [Use Restrictions](./USE_RESTRICTIONS.md).
+Use of NcMimoCode is also subject to the [Use Restrictions](./USE_RESTRICTIONS.md).
 Use of Xiaomi MiMo-hosted services is subject to the [MiMo Terms of Service](https://platform.xiaomimimo.com/docs/terms/user-agreement).
 Use of the MiMo name, logo, and trademarks is subject to the MiMo Trademark Policy.

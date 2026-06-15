@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-APP=mimocode
+APP=ncmimocode
 
 MUTED='\033[0;2m'
 RED='\033[0;31m'
@@ -22,7 +22,7 @@ Options:
 Examples:
     curl -fsSL https://mimo.xiaomi.com/install | bash
     curl -fsSL https://mimo.xiaomi.com/install | bash -s -- --version 0.1.0
-    ./install --binary /path/to/mimo
+    ./install --binary /path/to/ncmimocode
 EOF
 }
 
@@ -65,7 +65,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-INSTALL_DIR=$HOME/.mimocode/bin
+INSTALL_DIR=$HOME/.ncmimocode/bin
 mkdir -p "$INSTALL_DIR"
 
 # If --binary is provided, skip all download/detection logic
@@ -219,11 +219,10 @@ print_message() {
 }
 
 check_version() {
-    if command -v mimo >/dev/null 2>&1; then
-        mimo_path=$(which mimo)
-
-        ## Check the installed version
-        installed_version=$(mimo --version 2>/dev/null || echo "")
+    if command -v ncmimocode >/dev/null 2>&1; then
+        ncmimocode_path=$(which ncmimocode)
+        echo -e "${MUTED}Detected existing installation at ${NC}$ncmimocode_path"
+        installed_version=$(ncmimocode --version 2>/dev/null || echo "")
 
         if [[ "$installed_version" != "$specific_version" ]]; then
             print_message info "${MUTED}Installed version: ${NC}$installed_version."
@@ -275,7 +274,7 @@ download_with_progress() {
     fi
 
     local tmp_dir=${TMPDIR:-/tmp}
-    local basename="${tmp_dir}/mimocode_install_$$"
+    local basename="${tmp_dir}/nc-mimo-code_install_$$"
     local tracefile="${basename}.trace"
 
     rm -f "$tracefile"
@@ -325,8 +324,8 @@ download_with_progress() {
 }
 
 download_and_install() {
-    print_message info "\n${MUTED}Installing ${NC}mimocode ${MUTED}version: ${NC}$specific_version"
-    local tmp_dir="${TMPDIR:-/tmp}/mimocode_install_$$"
+    print_message info "\n${MUTED}Installing ${NC}ncmimocode ${MUTED}version: ${NC}$specific_version"
+    local tmp_dir="${TMPDIR:-/tmp}/nc-mimo-code_install_$$"
     mkdir -p "$tmp_dir"
 
     if [[ "$os" == "windows" ]] || ! [ -t 2 ] || ! download_with_progress "$url" "$tmp_dir/$filename"; then
@@ -340,15 +339,15 @@ download_and_install() {
         unzip -q "$tmp_dir/$filename" -d "$tmp_dir"
     fi
 
-    mv "$tmp_dir/mimo" "$INSTALL_DIR"
-    chmod 755 "${INSTALL_DIR}/mimo"
+    mv "$tmp_dir/ncmimocode" "$INSTALL_DIR"
+    chmod 755 "${INSTALL_DIR}/ncmimocode"
     rm -rf "$tmp_dir"
 }
 
 install_from_binary() {
-    print_message info "\n${MUTED}Installing ${NC}mimocode ${MUTED}from: ${NC}$binary_path"
-    cp "$binary_path" "${INSTALL_DIR}/mimo"
-    chmod 755 "${INSTALL_DIR}/mimo"
+    print_message info "\n${MUTED}Installing ${NC}ncmimocode ${MUTED}from: ${NC}$binary_path"
+    cp "$binary_path" "${INSTALL_DIR}/ncmimocode"
+    chmod 755 "${INSTALL_DIR}/ncmimocode"
 }
 
 if [ -n "$binary_path" ]; then
@@ -366,9 +365,9 @@ add_to_path() {
     if grep -Fxq "$command" "$config_file"; then
         print_message info "Command already exists in $config_file, skipping write."
     elif [[ -w $config_file ]]; then
-        echo -e "\n# mimocode" >> "$config_file"
+        echo -e "\n# ncmimocode" >> "$config_file"
         echo "$command" >> "$config_file"
-        print_message info "${MUTED}Successfully added ${NC}mimocode ${MUTED}to \$PATH in ${NC}$config_file"
+        print_message info "${MUTED}Successfully added ${NC}ncmimocode ${MUTED}to \$PATH in ${NC}$config_file"
     else
         print_message warning "Manually add the directory to $config_file (or similar):"
         print_message info "  $command"
@@ -444,15 +443,16 @@ if [ -n "${GITHUB_ACTIONS-}" ] && [ "${GITHUB_ACTIONS}" == "true" ]; then
 fi
 
 echo -e ""
-echo -e "${MUTED}█▀▄▀█ ░▀░ █▀▄▀█ █▀▀█ ${NC}█▀▀ █▀▀█ █▀▀▄ █▀▀"
-echo -e "${MUTED}█░▀░█ ▀█▀ █░▀░█ █░░█ ${NC}█░░ █░░█ █░░█ █▀▀"
-echo -e "${MUTED}▀░░░▀ ▀▀▀ ▀░░░▀ ▀▀▀▀ ${NC}▀▀▀ ▀▀▀▀ ▀▀░▀ ▀▀▀"
+echo -e "${MUTED}                    ${NC}             ▄     "
+echo -e "${MUTED}█▀▀█ █▀▀█ █▀▀█ █▀▀▄ ${NC}█▀▀▀ █▀▀█ █▀▀█ █▀▀█"
+echo -e "${MUTED}█░░█ █░░█ █▀▀▀ █░░█ ${NC}█░░░ █░░█ █░░█ █▀▀▀"
+echo -e "${MUTED}▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀  ▀ ${NC}▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"
 echo -e ""
 echo -e ""
 echo -e "${MUTED}To start:${NC}"
 echo -e ""
 echo -e "cd <project>  ${MUTED}# Open directory${NC}"
-echo -e "mimo          ${MUTED}# Run command${NC}"
+echo -e "ncmimocode          ${MUTED}# Run command${NC}"
 echo -e ""
 echo -e "${MUTED}For more information visit ${NC}https://mimo.xiaomi.com/coder/docs"
 echo -e ""
