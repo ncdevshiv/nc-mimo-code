@@ -8,8 +8,8 @@ export const ServeCommand = cmd({
   builder: (yargs) => withNetworkOptions(yargs),
   describe: "starts a headless mimocode server",
   handler: async (args) => {
-    if (!Flag.MIMOCODE_SERVER_PASSWORD) {
-      console.log("Warning: MIMOCODE_SERVER_PASSWORD is not set; server is unsecured.")
+    if (!Flag.NC_MIMO_CODE_SERVER_PASSWORD) {
+      console.log("Warning: NC_MIMO_CODE_SERVER_PASSWORD is not set; server is unsecured.")
     }
     const opts = await resolveNetworkOptions(args)
     const server = await Server.listen(opts)

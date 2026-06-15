@@ -462,7 +462,7 @@ export interface Interface {
 export class Service extends Context.Service<Service, Interface>()("@opencode/Config") {}
 
 function globalConfigFile() {
-  const candidates = ["mimocode.jsonc", "mimocode.json", "config.json"].map((file) =>
+  const candidates = ["nc-mimo-code.jsonc", "nc-mimo-code.json", "config.json"].map((file) =>
     path.join(Global.Path.config, file),
   )
   for (const file of candidates) {
@@ -555,8 +555,8 @@ export const layer = Layer.effect(
       let result: Info = pipe(
         {},
         mergeDeep(yield* loadFile(path.join(Global.Path.config, "config.json"))),
-        mergeDeep(yield* loadFile(path.join(Global.Path.config, "mimocode.json"))),
-        mergeDeep(yield* loadFile(path.join(Global.Path.config, "mimocode.jsonc"))),
+        mergeDeep(yield* loadFile(path.join(Global.Path.config, "nc-mimo-code.json"))),
+        mergeDeep(yield* loadFile(path.join(Global.Path.config, "nc-mimo-code.jsonc"))),
       )
 
       const legacy = path.join(Global.Path.config, "config")
@@ -620,7 +620,7 @@ export const layer = Layer.effect(
 
         const pluginScopeForSource = Effect.fnUntraced(function* (source: string) {
           if (source.startsWith("http://") || source.startsWith("https://")) return "global"
-          if (source === "MIMOCODE_CONFIG_CONTENT") return "local"
+          if (source === "NC_MIMO_CODE_CONFIG_CONTENT") return "local"
           if (yield* InstanceRef.use((ctx) => Effect.succeed(Instance.containsPath(source, ctx)))) return "local"
           return "global"
         })
@@ -730,12 +730,12 @@ export const layer = Layer.effect(
         const global = yield* getGlobal()
         yield* merge(Global.Path.config, global, "global")
 
-        if (Flag.MIMOCODE_CONFIG) {
-          yield* merge(Flag.MIMOCODE_CONFIG, yield* loadFile(Flag.MIMOCODE_CONFIG))
-          log.debug("loaded custom config", { path: Flag.MIMOCODE_CONFIG })
+        if (Flag.NC_MIMO_CODE_CONFIG) {
+          yield* merge(Flag.NC_MIMO_CODE_CONFIG, yield* loadFile(Flag.NC_MIMO_CODE_CONFIG))
+          log.debug("loaded custom config", { path: Flag.NC_MIMO_CODE_CONFIG })
         }
 
-        if (!Flag.MIMOCODE_DISABLE_PROJECT_CONFIG) {
+        if (!Flag.NC_MIMO_CODE_DISABLE_PROJECT_CONFIG) {
           for (const file of yield* ConfigPaths.files("mimocode", ctx.directory, ctx.worktree).pipe(Effect.orDie)) {
             yield* merge(file, yield* loadFile(file), "local")
           }
@@ -747,8 +747,8 @@ export const layer = Layer.effect(
 
         const directories = yield* ConfigPaths.directories(ctx.directory, ctx.worktree)
 
-        if (Flag.MIMOCODE_CONFIG_DIR) {
-          log.debug("loading config from MIMOCODE_CONFIG_DIR", { path: Flag.MIMOCODE_CONFIG_DIR })
+        if (Flag.NC_MIMO_CODE_CONFIG_DIR) {
+          log.debug("loading config from NC_MIMO_CODE_CONFIG_DIR", { path: Flag.NC_MIMO_CODE_CONFIG_DIR })
         }
 
         const deps: Fiber.Fiber<void, never>[] = []
@@ -759,8 +759,8 @@ export const layer = Layer.effect(
         }
 
         for (const dir of directories) {
-          if (dir.endsWith(".mimocode") || dir === Flag.MIMOCODE_CONFIG_DIR) {
-            for (const file of ["mimocode.json", "mimocode.jsonc"]) {
+          if (dir.endsWith(".mimocode") || dir === Flag.NC_MIMO_CODE_CONFIG_DIR) {
+            for (const file of ["nc-mimo-code.json", "nc-mimo-code.jsonc"]) {
               const source = path.join(dir, file)
               log.debug(`loading config from ${source}`)
               yield* merge(source, yield* loadFile(source))
@@ -798,20 +798,20 @@ export const layer = Layer.effect(
           result.command = mergeDeep(result.command ?? {}, yield* Effect.promise(() => ConfigCommand.load(dir)))
           result.agent = mergeDeep(result.agent ?? {}, yield* Effect.promise(() => ConfigAgent.load(dir)))
           result.agent = mergeDeep(result.agent ?? {}, yield* Effect.promise(() => ConfigAgent.loadMode(dir)))
-          // Auto-discovered plugins under `.mimocode/plugin(s)` are already local files, so ConfigPlugin.load
+          // Auto-discovered plugins under `.nc-mimo-code/plugin(s)` are already local files, so ConfigPlugin.load
           // returns normalized Specs and we only need to attach origin metadata here.
           const list = yield* Effect.promise(() => ConfigPlugin.load(dir))
           yield* mergePluginOrigins(dir, list)
         }
 
-        if (process.env.MIMOCODE_CONFIG_CONTENT) {
-          const source = "MIMOCODE_CONFIG_CONTENT"
-          const next = yield* loadConfig(process.env.MIMOCODE_CONFIG_CONTENT, {
+        if (process.env.NC_MIMO_CODE_CONFIG_CONTENT) {
+          const source = "NC_MIMO_CODE_CONFIG_CONTENT"
+          const next = yield* loadConfig(process.env.NC_MIMO_CODE_CONFIG_CONTENT, {
             dir: ctx.directory,
             source,
           })
           yield* merge(source, next, "local")
-          log.debug("loaded custom config from MIMOCODE_CONFIG_CONTENT")
+          log.debug("loaded custom config from NC_MIMO_CODE_CONFIG_CONTENT")
         }
 
         const activeAccount = Option.getOrUndefined(
@@ -827,8 +827,8 @@ export const layer = Layer.effect(
               { concurrency: 2 },
             )
             if (Option.isSome(tokenOpt)) {
-              process.env["MIMOCODE_CONSOLE_TOKEN"] = tokenOpt.value
-              yield* env.set("MIMOCODE_CONSOLE_TOKEN", tokenOpt.value)
+              process.env["NC_MIMO_CODE_CONSOLE_TOKEN"] = tokenOpt.value
+              yield* env.set("NC_MIMO_CODE_CONSOLE_TOKEN", tokenOpt.value)
             }
 
             if (Option.isSome(configOpt)) {
@@ -855,7 +855,7 @@ export const layer = Layer.effect(
 
         const managedDir = ConfigManaged.managedConfigDir()
         if (existsSync(managedDir)) {
-          for (const file of ["mimocode.json", "mimocode.jsonc"]) {
+          for (const file of ["nc-mimo-code.json", "nc-mimo-code.jsonc"]) {
             const source = path.join(managedDir, file)
             yield* merge(source, yield* loadFile(source), "global")
           }
@@ -872,7 +872,7 @@ export const layer = Layer.effect(
           mergeMcpOrigins(managed.source, next, "opencode")
         }
 
-        if (!Flag.MIMOCODE_DISABLE_CLAUDE_CODE_MCP) {
+        if (!Flag.NC_MIMO_CODE_DISABLE_CLAUDE_CODE_MCP) {
           yield* mergeClaudeMcp(path.join(Global.Path.home, ".claude.json"))
           yield* mergeClaudeMcp(path.join(ctx.directory, ".claude.json"))
         }
@@ -886,8 +886,8 @@ export const layer = Layer.effect(
           })
         }
 
-        if (Flag.MIMOCODE_PERMISSION) {
-          result.permission = mergeDeep(result.permission ?? {}, JSON.parse(Flag.MIMOCODE_PERMISSION))
+        if (Flag.NC_MIMO_CODE_PERMISSION) {
+          result.permission = mergeDeep(result.permission ?? {}, JSON.parse(Flag.NC_MIMO_CODE_PERMISSION))
         }
 
         if (result.tools) {
@@ -909,10 +909,10 @@ export const layer = Layer.effect(
           result.share = "auto"
         }
 
-        if (Flag.MIMOCODE_DISABLE_AUTOCOMPACT) {
+        if (Flag.NC_MIMO_CODE_DISABLE_AUTOCOMPACT) {
           result.compaction = { ...result.compaction, auto: false }
         }
-        if (Flag.MIMOCODE_DISABLE_PRUNE) {
+        if (Flag.NC_MIMO_CODE_DISABLE_PRUNE) {
           result.compaction = { ...result.compaction, prune: false }
         }
 

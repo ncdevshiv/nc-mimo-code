@@ -45,7 +45,7 @@ export function resource(): { serviceName: string; serviceVersion: string; attri
     attributes: {
       ...attributes,
       "deployment.environment.name": InstallationChannel,
-      "opencode.client": Flag.MIMOCODE_CLIENT,
+      "opencode.client": Flag.NC_MIMO_CODE_CLIENT,
       "opencode.process_role": processMetadata.processRole,
       "opencode.run_id": processMetadata.runID,
       "service.instance.id": processID,

@@ -1,6 +1,6 @@
 # 构建与发布
 
-本项目在内部 GitLab 开发，推送到 GitHub (`https://github.com/XiaomiMiMo/MiMo-Code`) 时代码经过裁剪，因此**构建和发布在本地完成**，不使用 GitHub Actions CI 构建。
+本项目在内部 GitLab 开发，推送到 GitHub (`https://github.com/ncdevshiv/nc-mimo-code`) 时代码经过裁剪，因此**构建和发布在本地完成**，不使用 GitHub Actions CI 构建。
 
 ---
 
@@ -28,7 +28,7 @@
 |----------|------|----------|
 | `NPM_TOKEN` | npm publish (`@nc-mimo-code` scope) | npmjs.com → Access Tokens → Granular Token |
 | `GH_TOKEN` | GitHub Release 创建/上传 | `gh auth token` 或 GitHub PAT（repo scope） |
-| `GH_REPO` | 目标 GitHub 仓库 | `XiaomiMiMo/MiMo-Code` |
+| `GH_REPO` | 目标 GitHub 仓库 | `ncdevshiv/nc-mimo-code` |
 
 可选：
 | 环境变量 | 用途 | 默认行为 |
@@ -41,7 +41,7 @@
 ### 一键发布
 
 ```bash
-GH_REPO=XiaomiMiMo/MiMo-Code \
+GH_REPO=ncdevshiv/nc-mimo-code \
 NPM_TOKEN=npm_xxxxx \
 GH_TOKEN=$(gh auth token) \
   ./script/release.ts
@@ -65,10 +65,10 @@ OPENCODE_VERSION=1.2.3 ./packages/opencode/script/build.ts
 NPM_TOKEN=npm_xxxxx OPENCODE_VERSION=1.2.3 ./script/publish.ts
 
 # 仅创建 GitHub Release（不含 npm）
-GH_TOKEN=$(gh auth token) GH_REPO=XiaomiMiMo/MiMo-Code ./script/version.ts
+GH_TOKEN=$(gh auth token) GH_REPO=ncdevshiv/nc-mimo-code ./script/version.ts
 # 然后手动上传二进制:
-gh release upload v1.2.3 packages/opencode/dist/*.zip packages/opencode/dist/*.tar.gz --repo XiaomiMiMo/MiMo-Code
-gh release edit v1.2.3 --draft=false --repo XiaomiMiMo/MiMo-Code
+gh release upload v1.2.3 packages/opencode/dist/*.zip packages/opencode/dist/*.tar.gz --repo ncdevshiv/nc-mimo-code
+gh release edit v1.2.3 --draft=false --repo ncdevshiv/nc-mimo-code
 ```
 
 ---
@@ -90,7 +90,7 @@ gh release edit v1.2.3 --draft=false --repo XiaomiMiMo/MiMo-Code
 
 1. 确认 npmjs.org 上 `@nc-mimo-code` org 存在
 2. 创建 Granular Access Token（Packages: Read and write, scope: `@nc-mimo-code`）
-3. 确认 `gh auth status` 有 `XiaomiMiMo/MiMo-Code` 的 repo 权限
+3. 确认 `gh auth status` 有 `ncdevshiv/nc-mimo-code` 的 repo 权限
 4. 设定 package.json 版本为 `0.1.0`
 5. 运行 `./script/release.ts`
 

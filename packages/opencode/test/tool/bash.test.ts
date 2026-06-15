@@ -485,7 +485,7 @@ describe("tool.bash permissions", () => {
       test(
         `asks for external_directory permission for missing PowerShell env paths [${item.label}]`,
         withShell(item, async () => {
-          const key = "MIMOCODE_TEST_MISSING"
+          const key = "NC_MIMO_CODE_TEST_MISSING"
           const prev = process.env[key]
           delete process.env[key]
           try {

@@ -9271,7 +9271,7 @@
             "type": "string"
           },
           "params": {
-            "description": "Template parameters for i18n interpolation (e.g. { plan: '.mimocode/plans/...' })",
+            "description": "Template parameters for i18n interpolation (e.g. { plan: '.nc-mimo-code/plans/...' })",
             "type": "object",
             "propertyNames": {
               "type": "string"

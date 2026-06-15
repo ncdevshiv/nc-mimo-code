@@ -25,7 +25,7 @@ const log = Log.create({ service: "actor.spawn" })
 
 /**
  * Cap on preStop ReAct re-entries per spawn — prevents infinite loops.
- * TODO: lift to mimocode.json config (e.g. actor.maxPreReact) and add per-hook
+ * TODO: lift to nc-mimo-code.json config (e.g. actor.maxPreReact) and add per-hook
  * `maxContinue` clamp at registration. Plan: platform cap = hard ceiling, hook
  * cap may only narrow, never widen. See spec Future work.
  */

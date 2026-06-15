@@ -29,7 +29,7 @@ interface MigrateInput {
 }
 
 /**
- * Migrates tui-specific keys (theme, keybinds, tui) from mimocode.json files
+ * Migrates tui-specific keys (theme, keybinds, tui) from nc-mimo-code.json files
  * into dedicated tui.json files. Migration is performed per-directory and
  * skips only locations where a tui.json already exists.
  */
@@ -134,12 +134,12 @@ async function backupAndStripLegacy(file: string, source: string) {
 async function mimocodeFiles(input: { directories: string[]; cwd: string }) {
   const files = [
     ...ConfigPaths.fileInDirectory(Global.Path.config, "mimocode"),
-    ...(await Filesystem.findUp(["mimocode.json", "mimocode.jsonc"], input.cwd, undefined, { rootFirst: true })),
+    ...(await Filesystem.findUp(["nc-mimo-code.json", "nc-mimo-code.jsonc"], input.cwd, undefined, { rootFirst: true })),
   ]
   for (const dir of unique(input.directories)) {
     files.push(...ConfigPaths.fileInDirectory(dir, "mimocode"))
   }
-  if (Flag.MIMOCODE_CONFIG) files.push(Flag.MIMOCODE_CONFIG)
+  if (Flag.NC_MIMO_CODE_CONFIG) files.push(Flag.NC_MIMO_CODE_CONFIG)
 
   const existing = await Promise.all(
     unique(files).map(async (file) => {

@@ -2,7 +2,7 @@
 
 This document records a focused audit of the tool subsystem in
 `packages/opencode/src/tool/` and the refactor that was applied on top of
-the upstream XiaomiMiMo/MiMo-Code import.
+the upstream ncdevshiv/nc-mimo-code import.
 
 The audit is **read-only analysis** — it surveys all 21 built-in tools
 plus the cross-cutting helpers (`tool.ts`, `external-directory.ts`,

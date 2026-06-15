@@ -220,9 +220,9 @@ export const layer = Layer.effect(
         const client = createOpencodeClient({
           baseUrl: "http://localhost:4096",
           directory: ctx.directory,
-          headers: Flag.MIMOCODE_SERVER_PASSWORD
+          headers: Flag.NC_MIMO_CODE_SERVER_PASSWORD
             ? {
-                Authorization: `Basic ${Buffer.from(`${Flag.MIMOCODE_SERVER_USERNAME ?? "mimocode"}:${Flag.MIMOCODE_SERVER_PASSWORD}`).toString("base64")}`,
+                Authorization: `Basic ${Buffer.from(`${Flag.NC_MIMO_CODE_SERVER_USERNAME ?? "mimocode"}:${Flag.NC_MIMO_CODE_SERVER_PASSWORD}`).toString("base64")}`,
               }
             : undefined,
           fetch: async (...args) => (await Server.Default()).app.fetch(...args),
@@ -263,8 +263,8 @@ export const layer = Layer.effect(
           }
         }
 
-        const plugins = Flag.MIMOCODE_PURE ? [] : (cfg.plugin_origins ?? [])
-        if (Flag.MIMOCODE_PURE && cfg.plugin_origins?.length) {
+        const plugins = Flag.NC_MIMO_CODE_PURE ? [] : (cfg.plugin_origins ?? [])
+        if (Flag.NC_MIMO_CODE_PURE && cfg.plugin_origins?.length) {
           log.info("skipping external plugins in pure mode", { count: cfg.plugin_origins.length })
         }
         if (plugins.length) yield* config.waitForDependencies()

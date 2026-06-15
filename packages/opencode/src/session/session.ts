@@ -478,7 +478,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
         tools: "INHERIT",
       }).pipe(Effect.ignore)
 
-      if (!Flag.MIMOCODE_EXPERIMENTAL_WORKSPACES) {
+      if (!Flag.NC_MIMO_CODE_EXPERIMENTAL_WORKSPACES) {
         // This only exist for backwards compatibility. We should not be
         // manually publishing this event; it is a sync event now
         yield* bus.publish(Event.Updated, {
@@ -807,7 +807,7 @@ export function* list(input?: {
   if (input?.workspaceID) {
     conditions.push(eq(SessionTable.workspace_id, input.workspaceID))
   }
-  if (!Flag.MIMOCODE_EXPERIMENTAL_WORKSPACES) {
+  if (!Flag.NC_MIMO_CODE_EXPERIMENTAL_WORKSPACES) {
     if (input?.directory) {
       conditions.push(eq(SessionTable.directory, input.directory))
     }

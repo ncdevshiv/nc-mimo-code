@@ -17,7 +17,7 @@ afterEach(async () => {
 })
 
 describe("tool.registry", () => {
-  it.live("loads tools from .mimocode/tool (singular)", () =>
+  it.live("loads tools from .nc-mimo-code/tool (singular)", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
         const opencode = path.join(dir, ".mimocode")
@@ -45,7 +45,7 @@ describe("tool.registry", () => {
     ),
   )
 
-  it.live("loads tools from .mimocode/tools (plural)", () =>
+  it.live("loads tools from .nc-mimo-code/tools (plural)", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
         const opencode = path.join(dir, ".mimocode")

@@ -56,7 +56,7 @@ export const UninstallCommand = {
     UI.empty()
     UI.println(UI.logo("  "))
     UI.empty()
-    prompts.intro("Uninstall MiMoCode")
+    prompts.intro("Uninstall NcMimoCode")
 
     const method = await AppRuntime.runPromise(Installation.Service.use((svc) => svc.method()))
     prompts.log.info(`Installation method: ${method}`)
@@ -227,7 +227,7 @@ async function executeUninstall(method: Installation.Method, targets: RemovalTar
   }
 
   UI.empty()
-  prompts.log.success("Thank you for using MiMoCode!")
+  prompts.log.success("Thank you for using NcMimoCode!")
 }
 
 async function getShellConfigFile(): Promise<string | null> {
@@ -264,7 +264,7 @@ async function getShellConfigFile(): Promise<string | null> {
     if (!exists) continue
 
     const content = await Filesystem.readText(file).catch(() => "")
-    if (content.includes("# mimocode") || content.includes(".mimocode/bin")) {
+    if (content.includes("# mimocode") || content.includes(".nc-mimo-code/bin")) {
       return file
     }
   }
@@ -289,13 +289,13 @@ async function cleanShellConfig(file: string) {
 
     if (skip) {
       skip = false
-      if (trimmed.includes(".mimocode/bin") || trimmed.includes("fish_add_path")) {
+      if (trimmed.includes(".nc-mimo-code/bin") || trimmed.includes("fish_add_path")) {
         continue
       }
     }
 
     if (
-      (trimmed.startsWith("export PATH=") && trimmed.includes(".mimocode/bin")) ||
+      (trimmed.startsWith("export PATH=") && trimmed.includes(".nc-mimo-code/bin")) ||
       (trimmed.startsWith("fish_add_path") && trimmed.includes(".mimocode"))
     ) {
       continue

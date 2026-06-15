@@ -143,7 +143,7 @@ export async function load(dir: string) {
     })
     if (!md) continue
 
-    const patterns = ["/.mimocode/agent/", "/.mimocode/agents/", "/agent/", "/agents/"]
+    const patterns = ["/.nc-mimo-code/agent/", "/.nc-mimo-code/agents/", "/agent/", "/agents/"]
     const name = configEntryNameFromPath(item, patterns)
 
     const config = {

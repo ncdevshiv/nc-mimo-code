@@ -176,7 +176,7 @@ export const layer = Layer.effect(
         hints: ["$ARGUMENTS"],
       }
 
-      if (Flag.MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL) {
+      if (Flag.NC_MIMO_CODE_EXPERIMENTAL_WORKFLOW_TOOL) {
         commands[Default.DEEP_RESEARCH] = {
           name: Default.DEEP_RESEARCH,
           description: "deep multi-source, fact-checked research report (runs the deep-research workflow)",

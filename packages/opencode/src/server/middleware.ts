@@ -40,9 +40,9 @@ export const AuthMiddleware: MiddlewareHandler = (c, next) => {
   // Allow CORS preflight requests to succeed without auth.
   // Browser clients sending Authorization headers will preflight with OPTIONS.
   if (c.req.method === "OPTIONS") return next()
-  const password = Flag.MIMOCODE_SERVER_PASSWORD
+  const password = Flag.NC_MIMO_CODE_SERVER_PASSWORD
   if (!password) return next()
-  const username = Flag.MIMOCODE_SERVER_USERNAME ?? "mimocode"
+  const username = Flag.NC_MIMO_CODE_SERVER_USERNAME ?? "mimocode"
 
   if (c.req.query("auth_token")) c.req.raw.headers.set("authorization", `Basic ${c.req.query("auth_token")}`)
 

@@ -34,7 +34,7 @@ function supportsImageInput(model: Provider.Model): boolean {
   return model.capabilities.input.image
 }
 
-export const OUTPUT_TOKEN_MAX = Flag.MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
+export const OUTPUT_TOKEN_MAX = Flag.NC_MIMO_CODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
 const MIMO_OUTPUT_TOKEN_MAX = 128_000
 
 // Maps npm package to the key the AI SDK expects for providerOptions
@@ -378,8 +378,8 @@ function imageByteSize(image: string): number | undefined {
 }
 
 function limitImages(msgs: ModelMessage[]): ModelMessage[] {
-  const maxImages = Flag.MIMOCODE_MAX_PROMPT_IMAGES
-  const maxSize = Flag.MIMOCODE_MAX_PROMPT_IMAGE_SIZE
+  const maxImages = Flag.NC_MIMO_CODE_MAX_PROMPT_IMAGES
+  const maxSize = Flag.NC_MIMO_CODE_MAX_PROMPT_IMAGE_SIZE
   if (maxImages === undefined && maxSize === undefined) return msgs
 
   const total = msgs.reduce(

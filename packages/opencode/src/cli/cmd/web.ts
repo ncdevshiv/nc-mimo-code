@@ -33,8 +33,8 @@ export const WebCommand = cmd({
   builder: (yargs) => withNetworkOptions(yargs),
   describe: "start mimocode server and open web interface",
   handler: async (args) => {
-    if (!Flag.MIMOCODE_SERVER_PASSWORD) {
-      UI.println(UI.Style.TEXT_WARNING_BOLD + "!  MIMOCODE_SERVER_PASSWORD is not set; server is unsecured.")
+    if (!Flag.NC_MIMO_CODE_SERVER_PASSWORD) {
+      UI.println(UI.Style.TEXT_WARNING_BOLD + "!  NC_MIMO_CODE_SERVER_PASSWORD is not set; server is unsecured.")
     }
     const opts = await resolveNetworkOptions(args)
     const server = await Server.listen(opts)

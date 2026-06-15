@@ -402,7 +402,7 @@ export type QuestionInfo = {
    */
   key?: string
   /**
-   * Template parameters for i18n interpolation (e.g. { plan: '.mimocode/plans/...' })
+   * Template parameters for i18n interpolation (e.g. { plan: '.nc-mimo-code/plans/...' })
    */
   params?: {
     [key: string]: string

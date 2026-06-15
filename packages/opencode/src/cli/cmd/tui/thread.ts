@@ -15,7 +15,7 @@ import type { EventSource } from "./context/sdk"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { writeHeapSnapshot } from "v8"
 import { TuiConfig } from "./config/tui"
-import { MIMOCODE_PROCESS_ROLE, MIMOCODE_RUN_ID, ensureRunID, sanitizedProcessEnv } from "@/util/mimo-process"
+import { NC_MIMO_CODE_PROCESS_ROLE, NC_MIMO_CODE_RUN_ID, ensureRunID, sanitizedProcessEnv } from "@/util/mimo-process"
 
 declare global {
   const OPENCODE_WORKER_PATH: string
@@ -137,8 +137,8 @@ export const TuiThreadCommand = cmd({
       }
       const cwd = Filesystem.resolve(process.cwd())
       const env = sanitizedProcessEnv({
-        [MIMOCODE_PROCESS_ROLE]: "worker",
-        [MIMOCODE_RUN_ID]: ensureRunID(),
+        [NC_MIMO_CODE_PROCESS_ROLE]: "worker",
+        [NC_MIMO_CODE_RUN_ID]: ensureRunID(),
       })
 
       const worker = new Worker(file, {

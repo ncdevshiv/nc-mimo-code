@@ -42,7 +42,7 @@ export const DEFAULT_CHUNK_TIMEOUT = 480_000 // 8 minutes — bounds single-atte
 // Tuned for mimo-v2.5-pro on MiMo Router whose cold-path TTFT after context
 // rebuild can dip to ~5 minutes silent. Reasoning models with multi-minute
 // thinking still emit partial chunks / heartbeats within this window. Override
-// per-provider via mimocode.json's `chunkTimeout` config for tighter or looser
+// per-provider via nc-mimo-code.json's `chunkTimeout` config for tighter or looser
 // bounds.
 
 function shouldUseCopilotResponsesApi(modelID: string): boolean {
@@ -325,7 +325,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
           }
 
           // Region resolution precedence (highest to lowest):
-          // 1. options.region from mimocode.json provider config
+          // 1. options.region from nc-mimo-code.json provider config
           // 2. defaultRegion from AWS_REGION environment variable
           // 3. Default "us-east-1" (baked into defaultRegion)
           const region = options?.region ?? defaultRegion
@@ -1224,7 +1224,7 @@ const layer: Layer.Layer<
                       providerID,
                       modelID,
                       defaulting_to: DEFAULT_CONTEXT_WINDOW,
-                      fix: `Set limit.context explicitly in mimocode.json under provider.${providerID}.models.${modelID}`,
+                      fix: `Set limit.context explicitly in nc-mimo-code.json under provider.${providerID}.models.${modelID}`,
                     })
                   }
                   return DEFAULT_CONTEXT_WINDOW
@@ -1249,7 +1249,7 @@ const layer: Layer.Layer<
         }
 
         // load env (skipped in mimo-only mode so ANTHROPIC_API_KEY etc. don't auto-light other providers)
-        if (!Flag.MIMOCODE_DISABLE_PROVIDER_ENV) {
+        if (!Flag.NC_MIMO_CODE_DISABLE_PROVIDER_ENV) {
           const envs = yield* env.all()
           for (const [id, provider] of Object.entries(database)) {
             const providerID = ProviderID.make(id)
@@ -1385,7 +1385,7 @@ const layer: Layer.Layer<
               (providerID === ProviderID.openrouter && modelID === "openai/gpt-5-chat")
             )
               delete provider.models[modelID]
-            if (model.status === "alpha" && !Flag.MIMOCODE_ENABLE_EXPERIMENTAL_MODELS) delete provider.models[modelID]
+            if (model.status === "alpha" && !Flag.NC_MIMO_CODE_ENABLE_EXPERIMENTAL_MODELS) delete provider.models[modelID]
             if (model.status === "deprecated") delete provider.models[modelID]
             if (
               (configProvider?.blacklist && configProvider.blacklist.includes(modelID)) ||

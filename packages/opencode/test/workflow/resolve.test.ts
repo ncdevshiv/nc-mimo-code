@@ -19,7 +19,7 @@ describe("isInlineScript", () => {
 })
 
 describe("resolveWorkflowScript", () => {
-  test("finds <name>.js under .mimocode/workflows walking up from start", async () => {
+  test("finds <name>.js under .nc-mimo-code/workflows walking up from start", async () => {
     const root = mkdtempSync(`${tmpdir()}/wf-res-`)
     const dir = path.join(root, ".mimocode", "workflows")
     mkdirSync(dir, { recursive: true })

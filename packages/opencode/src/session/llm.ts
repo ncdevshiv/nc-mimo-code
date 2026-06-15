@@ -44,7 +44,7 @@ type Result = Awaited<ReturnType<typeof streamText>>
  * - ECONNRESET / EPIPE / ETIMEDOUT — network errors typically caused by
  *   stale keep-alive sockets or upstream proxy timeouts
  * - "SSE read timed out" — `provider.ts:wrapSSE` chunk-timeout fired
- *   (configured per-provider via `chunkTimeout` in mimocode.json). This
+ *   (configured per-provider via `chunkTimeout` in nc-mimo-code.json). This
  *   is HTTP-byte-level: keep-alive comments still count as activity, so
  *   the error only fires when the underlying TCP stream is genuinely dead.
  *
@@ -594,7 +594,7 @@ const live: Layer.Layer<
                 "x-opencode-project": Instance.project.id,
                 "x-opencode-session": input.sessionID,
                 "x-opencode-request": input.user.id,
-                "x-opencode-client": Flag.MIMOCODE_CLIENT,
+                "x-opencode-client": Flag.NC_MIMO_CODE_CLIENT,
               }
             : {
                 "x-session-affinity": input.sessionID,

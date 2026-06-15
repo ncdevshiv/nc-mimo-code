@@ -55,7 +55,7 @@ export const Info = z
   })
 export type Info = z.infer<typeof Info>
 
-export const USER_AGENT = `mimocode/${InstallationChannel}/${InstallationVersion}/${Flag.MIMOCODE_CLIENT}`
+export const USER_AGENT = `mimocode/${InstallationChannel}/${InstallationVersion}/${Flag.NC_MIMO_CODE_CLIENT}`
 
 export function isPreview() {
   return InstallationChannel !== "latest"

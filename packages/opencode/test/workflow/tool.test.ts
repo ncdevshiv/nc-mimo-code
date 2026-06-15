@@ -260,12 +260,12 @@ function providerCfg(url: string) {
 describe("WorkflowTool run", () => {
   // The workflow tool is flag-gated (src/tool/registry.ts) — it only appears in
   // the agent's tool list when this is true. The agent-loop test below needs it.
-  const originalFlag = Flag.MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL
+  const originalFlag = Flag.NC_MIMO_CODE_EXPERIMENTAL_WORKFLOW_TOOL
   beforeAll(() => {
-    Flag.MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL = true
+    Flag.NC_MIMO_CODE_EXPERIMENTAL_WORKFLOW_TOOL = true
   })
   afterAll(() => {
-    Flag.MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL = originalFlag
+    Flag.NC_MIMO_CODE_EXPERIMENTAL_WORKFLOW_TOOL = originalFlag
   })
 
   it.live("run returns a run_id immediately, then completes in the background", () =>
