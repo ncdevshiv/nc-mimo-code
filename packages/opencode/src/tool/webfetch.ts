@@ -28,6 +28,11 @@ export const WebFetchTool = Tool.define(
     return {
       description: DESCRIPTION,
       parameters,
+      formatValidationError: Tool.formatZodError({
+        url: { type: "string (http:// or https:// URL)", required: true },
+        format: { type: '"text" | "markdown" | "html"', required: false, values: ["text", "markdown", "html"], note: "default markdown" },
+        timeout: { type: "number (seconds, max 120)", required: false },
+      }),
       execute: (params: z.infer<typeof parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           if (!params.url.startsWith("http://") && !params.url.startsWith("https://")) {
@@ -83,7 +88,7 @@ export const WebFetchTool = Tool.define(
               () =>
                 httpOk.execute(
                   HttpClientRequest.get(params.url).pipe(
-                    HttpClientRequest.setHeaders({ ...headers, "User-Agent": "mimocode" }),
+                    HttpClientRequest.setHeaders({ ...headers, "User-Agent": "nc-mimo-code" }),
                   ),
                 ),
             ),

@@ -20,6 +20,9 @@ export const QuestionTool = Tool.define<typeof parameters, Metadata, Question.Se
     return {
       description: DESCRIPTION,
       parameters,
+      formatValidationError: Tool.formatZodError({
+        questions: { type: "array of {question, options[]}", required: true, note: "each option has a label and description" },
+      }),
       execute: (params: z.infer<typeof parameters>, ctx: Tool.Context<Metadata>) =>
         Effect.gen(function* () {
           // never-ask mode: the tool stays visible so the model keeps routing

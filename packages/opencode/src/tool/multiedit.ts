@@ -26,6 +26,14 @@ export const MultiEditTool = Tool.define(
           )
           .describe("Array of edit operations to perform sequentially on the file"),
       }),
+      formatValidationError: Tool.formatZodError({
+        filePath: { type: "string (absolute path)", required: true },
+        edits: {
+          type: "array of {oldString, newString, replaceAll?}",
+          required: true,
+          note: "each entry must have oldString and newString",
+        },
+      }),
       execute: (
         params: {
           filePath: string

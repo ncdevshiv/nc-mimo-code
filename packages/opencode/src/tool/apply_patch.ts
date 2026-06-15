@@ -302,6 +302,9 @@ export const ApplyPatchTool = Tool.define(
     return {
       description: DESCRIPTION,
       parameters: PatchParams,
+      formatValidationError: Tool.formatZodError({
+        patchText: { type: "string (full patch text, *** Begin Patch ... *** End Patch)", required: true, note: "OpenAI apply_patch format" },
+      }),
       execute: (params: z.infer<typeof PatchParams>, ctx: Tool.Context) => run(params, ctx).pipe(Effect.orDie),
     }
   }),

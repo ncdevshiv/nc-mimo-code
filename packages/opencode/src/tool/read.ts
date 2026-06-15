@@ -277,6 +277,11 @@ export const ReadTool = Tool.define(
     return {
       description: DESCRIPTION,
       parameters,
+      formatValidationError: Tool.formatZodError({
+        filePath: { type: "string (absolute path)", required: true },
+        offset: { type: "number (1-indexed line number)", required: false, note: "must be >= 1" },
+        limit: { type: "number (max lines to read)", required: false, note: "must be > 0" },
+      }),
       execute: (params: z.infer<typeof parameters>, ctx: Tool.Context) => run(params, ctx).pipe(Effect.orDie),
     }
   }),

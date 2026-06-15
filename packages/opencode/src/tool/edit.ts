@@ -63,6 +63,12 @@ export const EditTool = Tool.define(
     return {
       description: DESCRIPTION,
       parameters: Parameters,
+      formatValidationError: Tool.formatZodError({
+        filePath: { type: "string (absolute path)", required: true },
+        oldString: { type: "string (text to replace)", required: true },
+        newString: { type: "string (replacement text)", required: true, note: "must differ from oldString" },
+        replaceAll: { type: "boolean (replace all occurrences)", required: false },
+      }),
       execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           if (!params.filePath) {

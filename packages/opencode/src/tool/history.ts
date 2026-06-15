@@ -48,6 +48,20 @@ export const HistoryTool = Tool.define(
     return {
       description: DESCRIPTION,
       parameters,
+      formatValidationError: Tool.formatZodError({
+        operation: { type: '"search" | "around"', required: true, values: ["search", "around"] },
+        query: { type: "string (FTS BM25 query)", required: false, note: "required when operation=search" },
+        scope: { type: '"project" | "global"', required: false, values: ["project", "global"] },
+        session_id: { type: "string", required: false },
+        kind: { type: "array of user_text | assistant_text | tool_input | tool_error | reasoning | tool_output", required: false },
+        tool_name: { type: "string", required: false, note: "e.g. Bash, Read" },
+        time_after: { type: "number (Unix ms)", required: false },
+        time_before: { type: "number (Unix ms)", required: false },
+        limit: { type: "number (max 50)", required: false },
+        message_id: { type: "string", required: false, note: "required when operation=around" },
+        before: { type: "number (default 5)", required: false },
+        after: { type: "number (default 5)", required: false },
+      }),
       execute: (args: z.infer<typeof parameters>, ctx) =>
         Effect.gen(function* () {
           if (args.operation === "search") {

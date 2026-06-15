@@ -31,6 +31,10 @@ export const WriteTool = Tool.define(
         content: z.string().describe("The content to write to the file"),
         filePath: z.string().describe("The absolute path to the file to write (must be absolute, not relative)"),
       }),
+      formatValidationError: Tool.formatZodError({
+        content: { type: "string", required: true },
+        filePath: { type: "string (absolute path, not relative)", required: true },
+      }),
       execute: (params: { content: string; filePath: string }, ctx: Tool.Context) =>
         Effect.gen(function* () {
           const filepath = path.isAbsolute(params.filePath)

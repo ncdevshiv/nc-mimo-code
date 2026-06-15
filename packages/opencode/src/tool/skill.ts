@@ -21,6 +21,9 @@ export const SkillTool = Tool.define(
     return {
       description: DESCRIPTION,
       parameters: Parameters,
+      formatValidationError: Tool.formatZodError({
+        name: { type: "string (skill name from available_skills)", required: true },
+      }),
       execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           const info = yield* skill.get(params.name)

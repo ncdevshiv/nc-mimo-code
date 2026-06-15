@@ -630,6 +630,13 @@ export const BashTool = Tool.define(
             .replaceAll("${maxLines}", String(Truncate.MAX_LINES))
             .replaceAll("${maxBytes}", String(Truncate.MAX_BYTES)),
           parameters: Parameters,
+          formatValidationError: Tool.formatZodError({
+            command: { type: "string", required: true },
+            timeout: { type: "number (milliseconds, must be > 0)", required: false, note: "default 2 min, max 10 min recommended" },
+            workdir: { type: "string (absolute path)", required: false, note: "use instead of `cd` commands" },
+            interactive: { type: "boolean", required: false, note: "set true when the command needs user input" },
+            description: { type: "string (5-10 words)", required: true },
+          }),
           execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
             Effect.gen(function* () {
               const effectiveCwd = SessionCwd.get(ctx.sessionID)

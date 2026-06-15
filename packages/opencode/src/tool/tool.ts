@@ -27,35 +27,17 @@ export type DynamicDescription = (agent: Agent.Info) => Effect.Effect<string>
  *   parameters,
  *   formatValidationError: formatDiscriminatedUnionError(["create","list",...]),
  */
-export function formatDiscriminatedUnionError(actions: readonly string[]): (error: z.ZodError) => string {
-  return (error) => {
-    const unknown = new Set<string>()
-    let discriminatorMissing = false
-    for (const issue of error.issues) {
-      if (issue.code === "unrecognized_keys") {
-        for (const k of issue.keys) unknown.add(k)
-      }
-      if (issue.code === "invalid_type" && issue.path.length === 0) {
-        discriminatorMissing = true
-      }
-    }
-    const lines: string[] = []
-    lines.push(`Schema accepts exactly one "operation" key, whose value is an object with an "action" discriminator.`)
-    lines.push(`Accepted actions: ${actions.join(" | ")}.`)
-    if (unknown.size > 0) {
-      const list = Array.from(unknown)
-        .map((k) => `"${k}"`)
-        .join(", ")
-      lines.push(`Unknown top-level keys in your call: ${list}.`)
-    }
-    if (discriminatorMissing) {
-      lines.push(`Your call is missing the required "operation" object.`)
-    }
-    const example = JSON.stringify({ operation: { action: actions[0] } })
-    lines.push(`Example of a valid call: ${example}`)
-    return lines.join("\n")
-  }
-}
+export {
+  formatDiscriminatedUnionError,
+  formatZodError,
+  type FieldHint,
+} from "./format-validation-error"
+
+/**
+ * @deprecated Use `formatDiscriminatedUnionError` or `formatZodError`
+ * from `./format-validation-error` directly. Re-exported here for the
+ * existing call sites in the strict 3 tools (task, actor, workflow).
+ */
 
 export type Context<M extends Metadata = Metadata> = {
   sessionID: SessionID

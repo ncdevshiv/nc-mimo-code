@@ -26,6 +26,14 @@ export const MemoryTool = Tool.define(
     return {
       description: DESCRIPTION,
       parameters,
+      formatValidationError: Tool.formatZodError({
+        operation: { type: '"search"', required: true, values: ["search"] },
+        query: { type: "string (BM25 query)", required: true },
+        scope: { type: '"global" | "projects" | "sessions" | "cc"', required: false, values: ["global", "projects", "sessions", "cc"] },
+        scope_id: { type: "string", required: false },
+        type: { type: "string (memory type filter)", required: false },
+        limit: { type: "number (default 10)", required: false },
+      }),
       execute: (args: z.infer<typeof parameters>) =>
         Effect.gen(function* () {
           const results = yield* memory.search({
