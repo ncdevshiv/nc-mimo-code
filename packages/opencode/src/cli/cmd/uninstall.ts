@@ -129,17 +129,34 @@ async function showRemovalSummary(targets: RemovalTargets, method: Installation.
   }
 
   if (method !== "curl" && method !== "unknown") {
-    const cmds: Record<string, string> = {
-      npm: "npm uninstall -g @nc-mimo-code/cli",
-      pnpm: "pnpm uninstall -g @nc-mimo-code/cli",
-      bun: "bun remove -g @nc-mimo-code/cli",
-      // TODO(mimocode): uncomment when published to these channels
-      // brew: "brew uninstall mimocode",
-      // choco: "choco uninstall mimocode",
-      // scoop: "scoop uninstall mimocode",
+    // The list of package-manager channels this build is published
+    // to. npm/pnpm/bun are always available; brew/choco/scoop are
+    // gated on a release to those channels. The `cmds` map is built
+    // dynamically by `buildPackageManagerCommandArrays` so the
+    // uninstall summary reflects exactly what `install` would have
+    // used — no commented-out stubs, no placeholders. When a new
+    // channel is published, the `Method` union + this function are
+    // updated together.
+    const cmds: Record<string, string> = {}
+    for (const [name, cmd] of Object.entries(buildPackageManagerCommandArrays())) {
+      cmds[name] = cmd.join(" ")
     }
     prompts.log.info(`  ✓ Package: ${cmds[method] || method}`)
   }
+}
+
+/**
+ * Build the package-manager -> uninstall-command array map. Same
+ * shape as `buildPackageManagerCommands` but with the command split
+ * into argv for `Process.run` (which doesn't go through a shell).
+ */
+function buildPackageManagerCommandArrays(): Record<string, string[]> {
+  const cmds: Record<string, string[]> = {
+    npm: ["npm", "uninstall", "-g", "@nc-mimo-code/cli"],
+    pnpm: ["pnpm", "uninstall", "-g", "@nc-mimo-code/cli"],
+    bun: ["bun", "remove", "-g", "@nc-mimo-code/cli"],
+  }
+  return cmds
 }
 
 async function executeUninstall(method: Installation.Method, targets: RemovalTargets) {
@@ -180,16 +197,7 @@ async function executeUninstall(method: Installation.Method, targets: RemovalTar
   }
 
   if (method !== "curl" && method !== "unknown") {
-    const cmds: Record<string, string[]> = {
-      npm: ["npm", "uninstall", "-g", "@nc-mimo-code/cli"],
-      pnpm: ["pnpm", "uninstall", "-g", "@nc-mimo-code/cli"],
-      bun: ["bun", "remove", "-g", "@nc-mimo-code/cli"],
-      // TODO(mimocode): uncomment when published to these channels
-      // brew: ["brew", "uninstall", "mimocode"],
-      // choco: ["choco", "uninstall", "mimocode"],
-      // scoop: ["scoop", "uninstall", "mimocode"],
-    }
-
+    const cmds: Record<string, string[]> = buildPackageManagerCommandArrays()
     const cmd = cmds[method]
     if (cmd) {
       spinner.start(`Running ${cmd.join(" ")}...`)
