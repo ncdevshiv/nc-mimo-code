@@ -12,6 +12,7 @@
 import "./log-init"
 import yargs from "yargs"
 import { TuiThreadCommand } from "../cli/cmd/tui/thread"
+import { LlmLogCommand } from "../cli/cmd/llm-log"
 import { InstallationVersion } from "../installation/version"
 import { hideBin } from "yargs/helpers"
 
@@ -37,4 +38,5 @@ const cli = yargs(hideBin(process.argv))
     type: "boolean",
   })
   .command(TuiThreadCommand)
+  .command(LlmLogCommand)
   .parse()

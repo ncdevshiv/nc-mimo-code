@@ -1,6 +1,7 @@
 import path from "path"
 import { Provider } from "@/provider"
 import { Log } from "@/util"
+import { TranscriptLog } from "@/monitor/llm-transcript"
 import { Context, Duration, Effect, Layer, Record, Schedule, Ref } from "effect"
 import * as Stream from "effect/Stream"
 import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema } from "ai"
@@ -555,17 +556,49 @@ const live: Layer.Layer<
         toolCount: Object.keys(tools).length,
       })
 
-      return streamText({
-        onError(error) {
-          l.debug("streamText error", {
-            messageID: input.user.id,
-            error: error instanceof Error ? error.message : String(error),
-            elapsedMs: Date.now() - streamStartTs,
-          })
-          l.error("stream error", {
-            error,
-          })
-        },
+    return streamText({
+      onError(error) {
+        l.debug("streamText error", {
+          messageID: input.user.id,
+          error: error instanceof Error ? error.message : String(error),
+          elapsedMs: Date.now() - streamStartTs,
+        })
+        l.error("stream error", {
+          error,
+        })
+      },
+      async onFinish({ response, usage, providerMetadata, finishReason }) {
+        // Persist the per-session LLM-transcript event (audit §4).
+        // Best-effort: failures are logged, never thrown. The
+        // transcript is the source of truth for "what exactly did
+        // the model send"; the rendered transcript (cli/tui/...)
+        // is a derived view that elides raw fields.
+        //
+        // The AI SDK 5 onFinish shape is `LanguageModelResponseMetadata`
+        // (text, toolCalls, finishReason, usage, providerMetadata).
+        // The `response` value is the raw provider response — when
+        // `includeRawChunks` is enabled (currently only the copilot
+        // SDK paths) this is the raw body. For the main providers
+        // we store the structured `messages` + the metadata we have
+        // in scope. A future pass plumbs `includeRawChunks` through
+        // the central provider abstraction (audit §4.4.1 was wrong
+        // about the current state).
+        await TranscriptLog.append({
+          ts: Date.now(),
+          sessionID: input.sessionID,
+          messageID: input.user.id,
+          role: "assistant",
+          model: { providerID: input.model.providerID, modelID: input.model.id },
+          request: { messages, tools: Object.keys(tools) },
+          response,
+          tool_calls: undefined,
+        })
+        // Purge-expired hook: best-effort, runs on every assistant
+        // message. 30 days by default; configurable via
+        // `config.log.retentionDays`.
+        const retentionDays = (cfg as { log?: { retentionDays?: number } }).log?.retentionDays ?? 30
+        await TranscriptLog.purgeExpired(input.sessionID, retentionDays * 24 * 60 * 60 * 1000)
+      },
         async experimental_repairToolCall(failed) {
           // Branch 1: case-fix. Cheap and deterministic — if the lowercased
           // tool name exists in our tool map, swap it. Always runs first.
