@@ -16,6 +16,7 @@ import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
 import { REPAIR_SYSTEM_PROMPT } from "@/monitor/tool-failure-repair"
+import { ASSESSMENT_SYSTEM_PROMPT } from "@/monitor/bash-long-running"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@/global"
@@ -388,6 +389,32 @@ export const layer = Layer.effect(
             native: true,
             hidden: true,
             prompt: REPAIR_SYSTEM_PROMPT,
+            permission: Permission.merge(
+              defaults,
+              Permission.fromConfig({ "*": "deny" }),
+              user,
+            ),
+            toolAllowlist: [],
+          },
+          // bash-long-running — T28 sub-actor for the bash long-running
+          // monitor (Phase 3). The bash tool publishes `tool.bash.started`
+          // with the child PID and `startedAt`; after `monitorThresholdMs`
+          // (configured in `config/monitor.ts`) the monitor layer spawns
+          // THIS agent with the command, elapsed time, and recent output.
+          // The sub-agent returns one of `continue` / `warn` / `terminate`.
+          // The dispatcher then either does nothing, surfaces a non-blocking
+          // banner to the main session, or kills the child.
+          //
+          // No tools (same rationale as `tool-failure-repair`).
+          // Hidden: the only entry point is `BashLongRunning.spawn`, never
+          // offered to the main agent.
+          "bash-long-running": {
+            name: "bash-long-running",
+            mode: "subagent" as const,
+            options: {},
+            native: true,
+            hidden: true,
+            prompt: ASSESSMENT_SYSTEM_PROMPT,
             permission: Permission.merge(
               defaults,
               Permission.fromConfig({ "*": "deny" }),

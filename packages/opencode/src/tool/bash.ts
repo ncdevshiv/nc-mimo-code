@@ -18,10 +18,15 @@ import { SessionCwd } from "./session-cwd"
 import { BashArity } from "@/permission/arity"
 import * as Truncate from "./truncate"
 import { Plugin } from "@/plugin"
-import { Effect, Stream } from "effect"
+import { Effect, Fiber, Stream } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import * as BashInteractive from "./bash-interactive"
+import { Bus } from "@/bus"
+import { Config } from "@/config"
+import * as BashLongRunning from "@/monitor/bash-long-running"
+import { registerBashHandle, unregisterBashHandle } from "./bash-handle-registry"
+import { BashExited, BashLongRunningWarn, BashStarted } from "@/monitor/bash-events"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.NC_MIMO_CODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -468,6 +473,115 @@ export const BashTool = Tool.define(
       const code: number | null = yield* Effect.scoped(
         Effect.gen(function* () {
           const handle = yield* spawner.spawn(cmd(input.shell, input.name, input.command, input.cwd, input.env))
+          const startedAt = Date.now()
+
+          // Register the child handle with the module-scoped registry so
+          // the bash long-running monitor (Phase 3) can kill the child
+          // when its sub-actor returns `kind: "terminate"`. The registry
+          // holds a `pid -> handle` map; unregister on exit/cleanup.
+          // Wrapped in a `try` block so a registry-throw doesn't break
+          // the bash call — the handle is best-effort observable.
+          yield* Effect.sync(() => {
+            try {
+              registerBashHandle({
+                pid: handle.pid,
+                kill: () => handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie),
+              })
+            } catch {
+              // intentionally swallowed — registry failure must not
+              // fail the bash invocation
+            }
+          })
+
+          // Publish BashStarted so external observers (TUI banner,
+          // plugin subscribers) can react. The long-running monitor
+          // is owned by THIS function (forked below); the bus event
+          // is the observability hook.
+          yield* Effect.promise(() =>
+            Bus.publish(BashStarted, {
+              sessionID: ctx.sessionID,
+              messageID: ctx.messageID,
+              callID: ctx.callID ?? "unknown",
+              command: input.command,
+              ...(input.description !== undefined ? { description: input.description } : {}),
+              pid: handle.pid,
+              startedAt,
+            }),
+          ).pipe(Effect.ignore)
+
+          // Fork the long-running monitor: after `monitorThresholdMs`,
+          // ask a sub-actor whether the command is making progress.
+          // The fork is cancelled when the child exits (via
+          // `Fiber.interrupt` below) so the sub-actor is never
+          // spawned for a command that already finished.
+          //
+          // `Config.Service` is yielded INSIDE the fork body so its
+          // requirement stays local to the fork — the `run` function's
+          // outer signature must not gain a Config dependency
+          // (that would break the tool's `execute` type, which is
+          // invoked from the tool runtime without Config in scope).
+          //
+          // The fork body is wrapped in `Effect.suspend` and asserted
+          // to `Effect<void, never, Config.Service>` so the `R` stays
+          // narrow. Without the assertion the body's complex yield
+          // chain infers as `unknown`, which breaks the `Tool.define`
+          // contract (the `wrap` function stores `execute` as
+          // `Effect<ExecuteResult, never, never>` and rejects `unknown`).
+          const monitorFiber: Fiber.Fiber<void, never> = yield* Effect.forkChild(
+            Effect.suspend(() =>
+              Effect.gen(function* () {
+                const config = yield* Config.Service
+                const cfg = yield* config.get()
+                const thresholdMs = cfg.monitor?.defaultTimeoutMs ?? 30_000
+                yield* Effect.sleep(`${thresholdMs} millis`)
+
+                const assessment: BashLongRunning.Assessment = yield* Effect.tryPromise(() =>
+                  BashLongRunning.spawn({
+                    sessionID: ctx.sessionID,
+                    command: input.command,
+                    pid: handle.pid,
+                    elapsedMs: Date.now() - startedAt,
+                    ...(input.description !== undefined ? { description: input.description } : {}),
+                  }),
+                ).pipe(
+                  Effect.catchCause(() =>
+                    Effect.succeed<BashLongRunning.Assessment>({
+                      kind: "continue",
+                      reason: "monitor sub-actor errored",
+                    }),
+                  ),
+                )
+
+                if (assessment.kind === "continue") return
+                if (assessment.kind === "warn") {
+                  yield* Effect.promise(() =>
+                    Bus.publish(BashLongRunningWarn, {
+                      sessionID: ctx.sessionID,
+                      messageID: ctx.messageID,
+                      callID: ctx.callID ?? "unknown",
+                      reason: assessment.reason,
+                      elapsedMs: Date.now() - startedAt,
+                    }),
+                  ).pipe(Effect.ignore)
+                  return
+                }
+                // kind === "terminate" — kill the child and surface a
+                // warning so the TUI shows the action. The handle is
+                // still in the registry; `handle.kill` is the
+                // authoritative kill.
+                yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.ignore)
+                yield* Effect.promise(() =>
+                  Bus.publish(BashLongRunningWarn, {
+                    sessionID: ctx.sessionID,
+                    messageID: ctx.messageID,
+                    callID: ctx.callID ?? "unknown",
+                    reason: `terminated: ${assessment.reason}`,
+                    elapsedMs: Date.now() - startedAt,
+                  }),
+                ).pipe(Effect.ignore)
+              }),
+            ) as Effect.Effect<void, never, Config.Service>,
+          )
 
           yield* Effect.forkScoped(
             Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
@@ -541,6 +655,30 @@ export const BashTool = Tool.define(
             expired = true
             yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
           }
+
+          // Cancel the long-running monitor: the child has exited,
+          // so spawning a sub-actor to ask "is this hung?" is
+          // wasted work. The monitor handles its own cleanup
+          // (cancelled forks release the sub-actor's resources).
+          yield* Fiber.interrupt(monitorFiber).pipe(Effect.ignore)
+
+          // Unregister + publish BashExited in a single tail.
+          yield* Effect.sync(() => unregisterBashHandle(handle.pid))
+          yield* Effect.promise(() =>
+            Bus.publish(BashExited, {
+              sessionID: ctx.sessionID,
+              messageID: ctx.messageID,
+              callID: ctx.callID ?? "unknown",
+              pid: handle.pid,
+              exitCode: exit.kind === "exit" ? exit.code : null,
+              reason:
+                exit.kind === "abort"
+                  ? "abort"
+                  : exit.kind === "timeout"
+                    ? "timeout"
+                    : "exit",
+            }),
+          ).pipe(Effect.ignore)
 
           return exit.kind === "exit" ? exit.code : null
         }),

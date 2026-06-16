@@ -34,6 +34,7 @@ import { ConfigLSP } from "./lsp"
 import { ConfigManaged } from "./managed"
 import { ConfigMCP } from "./mcp"
 import { ConfigModelID } from "./model-id"
+import { ConfigMonitor } from "./monitor"
 import { ConfigParse } from "./parse"
 import { ConfigPaths } from "./paths"
 import { ConfigPermission } from "./permission"
@@ -131,6 +132,10 @@ const InfoSchema = Schema.Struct({
   }),
   enabled_providers: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
     description: "When set, ONLY these providers will be enabled. All other providers will be ignored",
+  }),
+  monitor: Schema.optional(ConfigMonitor.Info).annotate({
+    description:
+      "Monitor subsystem configuration. The bash tool forks the bash-long-running sub-actor after `defaultTimeoutMs` and acts on its assessment (continue / warn / terminate).",
   }),
   model: Schema.optional(ConfigModelID).annotate({
     description: "Model to use in the format of provider/model, eg anthropic/claude-2",

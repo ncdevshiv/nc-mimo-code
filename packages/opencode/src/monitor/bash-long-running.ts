@@ -1,35 +1,24 @@
 // BashLongRunning — the deps-free core of the T26 sub-actor
-// (prompt + parser + types). The actual sub-actor invocation
-// (spawning a child session via the actor.run machinery) is T28's
-// work. The same split as T25:
+// (prompt + parser + types) AND the T28 dispatcher that calls the
+// `MonitorBridge` to spawn a sub-actor. Splitting the prompt/parser
+// (T26) from the dispatcher (T28) keeps the parts most likely to
+// have a subtle bug (bad prompt template, bad JSON recovery) pure
+// and standalone-testable, while the dispatcher is a thin pass-
+// through that delegates to the existing `Actor.Service`.
 //
-//   - T26 (this file): the parts most likely to have a subtle bug
-//     (the prompt template, the JSON recovery). Pure, deps-free,
-//     standalone-testable.
-//   - T28: the plumbing that calls `actor.run({ agent: "bash-long-
-//     running", ... })`, polls the running command for status,
-//     and pipes the response through `parseAssessment`.
-//
-// The contract between the two halves is the `AssessmentRequest`
-// and `Assessment` types below.
-//
-// Why this monitor exists: when a user asks the LLM to run a bash
-// command, the command can hang (network stuck, paged input, dead
-// lock). A LLM waiting 30 minutes for a hung `npm install` and
-// then timing out is a poor experience. The BashLongRunning
-// sub-actor fires after the command has been running for at
-// least `thresholdMs` and asks: "is this command making progress
-// or is it stuck? If stuck, what should we do?" The dispatcher
-// (T28) then either:
-//   - Does nothing (continue): the command is making progress.
-//   - Surfaces a warning to the main session (warn): the command
-//     looks suspicious; the LLM should consider interrupting.
-//   - Kills the command (terminate): the command is clearly hung
-//     or dangerous (e.g. infinite loop, runaway network call).
+// The two halves are deliberately decoupled: T28 can be developed
+// in parallel with T26. The contract between them is the
+// `AssessmentRequest` and `Assessment` types below; the dispatcher
+// additionally uses the `MonitorBridge` port (see
+// `monitor/actor-bridge.ts`) to talk to the actor subsystem without
+// depending on it directly.
 
+import { Effect } from "effect"
 import { z } from "zod"
+import { getMonitorBridge } from "./actor-bridge"
 
 export interface AssessmentRequest {
+  readonly sessionID: string
   readonly command: string
   readonly pid?: number
   readonly elapsedMs: number
@@ -42,7 +31,14 @@ export type Assessment =
   | { readonly kind: "warn"; readonly reason: string }
   | { readonly kind: "terminate"; readonly reason: string }
 
-const ASSESSMENT_SYSTEM_PROMPT = `You are assessing a long-running bash command that has exceeded its time threshold.
+/**
+ * The system prompt for the long-running bash monitor. Exported
+ * (not just a module-local constant) so the agent registry can
+ * install it as the `bash-long-running` sub-agent's system prompt
+ * at boot time. Mirrors `monitor/tool-failure-repair.ts`'s
+ * export pattern.
+ */
+export const ASSESSMENT_SYSTEM_PROMPT = `You are assessing a long-running bash command that has exceeded its time threshold.
 
 Your task: based on the command, the elapsed time, and (if available) the recent output, decide whether the command is making progress, looks suspicious, or is clearly hung.
 
@@ -149,4 +145,90 @@ export function parseAssessment(output: string): Assessment | null {
     return { kind: "continue", reason: data.continue }
   }
   return null
+}
+
+// ─────────────────────────────────────────────────────────────────
+// T28: dispatcher — calls the bridge to spawn a sub-actor and
+// translates the outcome into an `Assessment`. Mirrors the
+// `ToolFailureRepair.spawn` contract so a future bash-tap
+// dispatcher can reuse the same bridge port.
+// ─────────────────────────────────────────────────────────────────
+
+/** Mirror of `monitor/actor-bridge.ts`'s `SpawnInput` (kept inline
+ * so the public type from this module is self-describing). */
+export interface SpawnInput {
+  readonly sessionID: string
+  readonly agentType: string
+  readonly description: string
+  readonly task: string
+  readonly timeoutMs: number
+}
+
+const BASH_LONG_RUNNING_AGENT = "bash-long-running" as const
+const DEFAULT_TIMEOUT_MS = 30_000
+
+/**
+ * Optional dependencies for `spawn`. The `bridge` defaults to
+ * `getMonitorBridge()`; `timeoutMs` defaults to 30s. Tests inject
+ * a fake bridge via `deps.bridge` to avoid booting the runtime.
+ */
+export interface SpawnDeps {
+  readonly bridge?: import("./actor-bridge").MonitorBridge
+  readonly timeoutMs?: number
+}
+
+/**
+ * Translate a `MonitorSpawnResult` to an `Assessment`. Pulls the
+ * model output from `finalText` (or `structured` if the spawn used
+ * a `format` option), then runs it through `parseAssessment`.
+ *
+ * Maps every non-`success` bridge status to `{kind: "continue"}`
+ * (the conservative default — a hung or failing sub-actor is
+ * treated as "the bash is making progress" so the dispatcher
+ * doesn't kill the user's command because the LLM monitor had
+ * a problem).
+ */
+function assessmentFromBridge(outcome: import("./actor-bridge").MonitorSpawnResult): Assessment {
+  if (outcome.status !== "success") {
+    return { kind: "continue", reason: `monitor sub-actor ${outcome.status}` }
+  }
+  const raw =
+    outcome.structured !== undefined
+      ? typeof outcome.structured === "string"
+        ? outcome.structured
+        : JSON.stringify(outcome.structured)
+      : outcome.finalText
+  if (raw === undefined || raw.length === 0) {
+    return { kind: "continue", reason: "monitor sub-actor produced no output" }
+  }
+  const parsed = parseAssessment(raw)
+  if (parsed) return parsed
+  return { kind: "continue", reason: "monitor sub-actor output did not match the strict shape" }
+}
+
+/**
+ * Spawn the bash-long-running sub-actor and return its
+ * `Assessment`. Synchronous from the caller's perspective (it
+ * `await`s the bridge).
+ *
+ * Like `ToolFailureRepair.spawn`, the dispatcher's contract is:
+ * never throw on a parse/parse-shape failure; only throw if the
+ * bridge itself cannot be invoked (which means the monitor
+ * layer was never installed — a hard programming error).
+ */
+export async function spawn(req: AssessmentRequest, deps: SpawnDeps = {}): Promise<Assessment> {
+  const bridge = deps.bridge ?? getMonitorBridge()
+  const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
+
+  const outcome = await Effect.runPromise(
+    bridge.spawn({
+      sessionID: req.sessionID,
+      agentType: BASH_LONG_RUNNING_AGENT,
+      description: BASH_LONG_RUNNING_AGENT,
+      task: buildAssessmentPrompt(req),
+      timeoutMs,
+    }),
+  )
+
+  return assessmentFromBridge(outcome)
 }
