@@ -412,9 +412,68 @@ function limitImages(msgs: ModelMessage[]): ModelMessage[] {
   })
 }
 
-export function message(msgs: ModelMessage[], model: Provider.Model, options: Record<string, unknown>) {
+export interface MessageOptions {
+  /**
+   * When the model is OpenAI and the auth method is `oauth`, the
+   * AI SDK requires the system prompt to be passed via
+   * `providerOptions.openaiCompatible.instructions` (and dropped
+   * from the message list) — the OpenAI Responses endpoint treats
+   * the regular system message as a developer message and the
+   * oauth auth path rejects the latter. The flag is computed by
+   * the caller (typically `session/llm.ts`) which has
+   * `Auth.Service` in scope; passing it as an option keeps the
+   * transform itself free of auth knowledge.
+   */
+  readonly openaiOauth?: boolean
+  /**
+   * Caller-supplied options forwarded to the transform
+   * (`mergeDeep(model.options, options)` semantics). The
+   * OpenAI-oauth branch ignores this; the rest of the transform
+   * (cache markers, cache key, etc.) reads it.
+   */
+  readonly providerOptions?: Record<string, any>
+}
+
+export function message(
+  msgs: ModelMessage[],
+  model: Provider.Model,
+  options: Record<string, unknown> & MessageOptions = {},
+) {
+  const openaiOauth = options.openaiOauth ?? false
   msgs = unsupportedParts(msgs, model)
   msgs = limitImages(msgs)
+  if (openaiOauth) {
+    // OpenAI oauth auth method: the system prompt must be
+    // delivered via `providerOptions.openaiCompatible.instructions`
+    // (the AI SDK passes it through to the OpenAI Responses
+    // endpoint as the `instructions` field; the regular system
+    // message is dropped to avoid the "developer message
+    // forbidden" oauth-path rejection).
+    //
+    // The branching was previously inline in `agent.ts` and
+    // `session/llm.ts`; the audit flagged the leak as
+    // "provider-specific logic in agent". The transform is the
+    // right home — every provider's per-request shape adjustments
+    // live in `ProviderTransform` (see the cache-marker and
+    // cache-key branches above).
+    const systemText = msgs
+      .filter((m) => m.role === "system")
+      .map((m) => (typeof m.content === "string" ? m.content : ""))
+      .join("\n\n")
+    msgs = msgs.filter((m) => m.role !== "system")
+    if (systemText) {
+      msgs = msgs.map((m, i) =>
+        i === 0
+          ? {
+              ...m,
+              providerOptions: mergeDeep(m.providerOptions ?? {}, {
+                openaiCompatible: { instructions: systemText },
+              }),
+            }
+          : m,
+      )
+    }
+  }
   msgs = normalizeMessages(msgs, model, options)
   if (supportsCacheMarkers(model)) {
     msgs = applyCaching(msgs, model)

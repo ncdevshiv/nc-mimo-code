@@ -323,12 +323,18 @@ const live: Layer.Layer<
         { concurrency: "unbounded" },
       )
 
-      // OpenAI-oauth auth method: system messages are dropped from
-      // the message list and the policy text is passed via
-      // `providerOptions.instructions` instead (mirrored in
-      // agent/agent.ts:544). Tracked for a future refactor that
-      // pushes the per-provider oauth branch into
-      // ProviderTransform.providerOptions (see audit doc §6.4.3).
+      // OpenAI-oauth auth method: the AI SDK requires the system
+      // prompt to be passed via `providerOptions.openaiCompatible.instructions`
+      // (the OpenAI Responses endpoint treats the regular system
+      // message as a developer message and the oauth auth path
+      // rejects developer messages). The per-provider branch lives
+      // in `ProviderTransform.message` — the transform's contract
+      // is "every provider's per-request shape adjustments go here";
+      // the audit (§6.4.3) flagged this branch as a leak because
+      // the LLM service had it inline. The LLM service now
+      // computes the flag (it has `Auth.Service` in scope) and
+      // passes it to the transform; the message list it builds
+      // is the canonical non-OAuth shape.
       const isOpenaiOauth = item.id === "openai" && info?.type === "oauth"
 
       const system =
@@ -359,24 +365,19 @@ const live: Layer.Layer<
         mergeDeep(input.agent.options),
         mergeDeep(variant),
       )
-      if (isOpenaiOauth) {
-        options.instructions = system.join("\n")
-      }
 
       const isWorkflow = language instanceof GitLabWorkflowLanguageModel
-      const messages = isOpenaiOauth
+      const messages = isWorkflow
         ? input.messages
-        : isWorkflow
-          ? input.messages
-          : [
-              ...system.map(
-                (x): ModelMessage => ({
-                  role: "system",
-                  content: x,
-                }),
-              ),
-              ...input.messages,
-            ]
+        : [
+            ...system.map(
+              (x): ModelMessage => ({
+                role: "system",
+                content: x,
+              }),
+            ),
+            ...input.messages,
+          ]
 
       const params = yield* plugin.trigger(
         "chat.params",
@@ -720,7 +721,7 @@ const live: Layer.Layer<
               async transformParams(args) {
                 if (args.type === "stream") {
                   // @ts-expect-error
-                  args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
+                  args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, { ...options, openaiOauth: isOpenaiOauth })
                 }
                 return args.params
               },
