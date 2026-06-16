@@ -22,10 +22,19 @@ export const layer = Layer.effect(
     const set = Effect.fn("Env.set")(function* (key: string, value: string) {
       const env = yield* InstanceState.get(state)
       env[key] = value
+      // Also update `process.env` so any code path that reads env vars
+      // directly (e.g. `provider.ts` AWS/SAP credential bootstrapping,
+      // the `@aws-sdk/credential-providers` chain, native binaries
+      // that consult `getenv()`) sees the same value the Effect
+      // `Env` service returns. Without this, `Env.set` only updates
+      // the per-instance shallow copy and direct `process.env` reads
+      // stay stale.
+      process.env[key] = value
     })
     const remove = Effect.fn("Env.remove")(function* (key: string) {
       const env = yield* InstanceState.get(state)
       delete env[key]
+      delete process.env[key]
     })
 
     return Service.of({ get, all, set, remove })

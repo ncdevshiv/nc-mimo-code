@@ -137,6 +137,36 @@ const InfoSchema = Schema.Struct({
     description:
       "Monitor subsystem configuration. The bash tool forks the bash-long-running sub-actor after `defaultTimeoutMs` and acts on its assessment (continue / warn / terminate).",
   }),
+  actor: Schema.optional(
+    Schema.Struct({
+      // Pre-stop ReAct re-entry cap per spawn — prevents infinite loops.
+      // `maxPreReact` is a hard platform ceiling; per-hook caps may
+      // narrow but never widen (the actor/spawn module clamps at
+      // registration time).
+      maxPreReact: Schema.optional(
+        Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
+      ).annotate({
+        description: "Hard ceiling on preStop ReAct re-entries per spawn. Default 3.",
+      }),
+    }),
+  ).annotate({
+    description:
+      "Actor subsystem configuration. `maxPreReact` is a hard ceiling on preStop ReAct re-entries per spawn (default 3). Per-hook caps may narrow but never widen.",
+  }),
+  session: Schema.optional(
+    Schema.Struct({
+      // Goal-ReAct re-entry cap per session. Mirrors `actor.maxPreReact`
+      // but at the session level (the goal loop is session-scoped).
+      maxGoalReact: Schema.optional(
+        Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0)),
+      ).annotate({
+        description: "Hard ceiling on goal-ReAct re-entries per session. Default 3.",
+      }),
+    }),
+  ).annotate({
+    description:
+      "Session subsystem configuration. `maxGoalReact` is a hard ceiling on goal-ReAct re-entries per session (default 3).",
+  }),
   model: Schema.optional(ConfigModelID).annotate({
     description: "Model to use in the format of provider/model, eg anthropic/claude-2",
   }),

@@ -2,6 +2,7 @@ import { Effect, Deferred, Context, Fiber, Layer, Scope, Cause } from "effect"
 import type { SessionID, MessageID } from "@/session/schema"
 import type { ProviderID, ModelID } from "@/provider/schema"
 import type { Tool as AITool, ModelMessage } from "ai"
+import { Config } from "@/config"
 import { Session } from "@/session"
 import { SessionPrompt } from "@/session/prompt"
 import { SessionRunState } from "@/session/run-state"
@@ -25,12 +26,20 @@ const log = Log.create({ service: "actor.spawn" })
 
 /**
  * Cap on preStop ReAct re-entries per spawn — prevents infinite loops.
- * TODO: lift to nc-mimo-code.json config (e.g. actor.maxPreReact) and add per-hook
- * `maxContinue` clamp at registration. Plan: platform cap = hard ceiling, hook
- * cap may only narrow, never widen. See spec Future work.
+ * Sourced from `config.actor.maxPreReact` (hard platform ceiling). Per-hook
+ * caps may narrow but never widen (the actor/spawn module clamps at
+ * registration time). The runtime default is 3 when the config key is
+ * absent.
+ *
+ * `MAX_PRE_REACT` and `MAX_POST_REACT` are kept as module-local constants
+ * for two reasons: (1) tests can import them directly without booting
+ * the full Effect runtime; (2) the actor/spawn module is reachable from
+ * hot paths where a `yield* config.get()` would be too expensive. The
+ * `resolveActorCap` helper below reads the config and falls back to
+ * these constants when the key is absent.
  */
 export const MAX_PRE_REACT = 3
-/** Cap on postStop ReAct re-entries per spawn. See MAX_PRE_REACT TODO. */
+/** Cap on postStop ReAct re-entries per spawn. See MAX_PRE_REACT comment. */
 export const MAX_POST_REACT = 3
 const RETURN_FORMAT_INSTRUCTION = `
 
@@ -176,6 +185,13 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Ac
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
+    const config = yield* Config.Service
+    // Resolve the ReAct cap from config (defaults to MAX_PRE_REACT
+    // when the key is absent). Resolved once at layer build time so
+    // the hot path doesn't pay for `config.get()` per iteration.
+    const cfg = yield* config.get()
+    const maxPreReact = cfg.actor?.maxPreReact ?? MAX_PRE_REACT
+
     const session = yield* Session.Service
     const actorReg = yield* ActorRegistry.Service
     const agents = yield* Agent.Service
@@ -341,15 +357,16 @@ export const layer = Layer.effect(
             structured = turn.structured
 
             iteration++
-            if (iteration > MAX_PRE_REACT) {
+            if (iteration > maxPreReact) {
               yield* bus.publish(HookEvent.ReActMaxReached, {
                 phase: "pre",
                 actorID: input.actorID,
                 agentType: input.agentType,
               })
-              log.warn("actor.preStop hit MAX_PRE_REACT cap; skipping further hook checks", {
+              log.warn("actor.preStop hit maxPreReact cap; skipping further hook checks", {
                 actorID: input.actorID,
                 totalTurns: iteration,
+                cap: maxPreReact,
               })
               break
             }

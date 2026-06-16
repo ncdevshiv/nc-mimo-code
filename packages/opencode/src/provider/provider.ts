@@ -269,19 +269,12 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
       const envProfile = env["AWS_PROFILE"]
       const profile = configProfile ?? envProfile
 
+      // The Env service now mirrors writes to `process.env` (see
+      // env/index.ts) so direct `process.env` reads below see the
+      // same value the Effect Env.get returns. The local-copy
+      // workaround the previous TODO documented is no longer needed.
       const awsAccessKeyId = env["AWS_ACCESS_KEY_ID"]
-
-      // TODO: Using process.env directly because Env.set only updates a process.env shallow copy,
-      // until the scope of the Env API is clarified (test only or runtime?)
-      const awsBearerToken = iife(() => {
-        const envToken = process.env.AWS_BEARER_TOKEN_BEDROCK
-        if (envToken) return envToken
-        if (auth?.type === "api") {
-          process.env.AWS_BEARER_TOKEN_BEDROCK = auth.key
-          return auth.key
-        }
-        return undefined
-      })
+      const awsBearerToken = process.env.AWS_BEARER_TOKEN_BEDROCK ?? env["AWS_BEARER_TOKEN_BEDROCK"]
 
       const awsWebIdentityTokenFile = env["AWS_WEB_IDENTITY_TOKEN_FILE"]
 
@@ -511,23 +504,18 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
     }),
     "sap-ai-core": Effect.fnUntraced(function* () {
       const auth = yield* dep.auth("sap-ai-core")
-      // TODO: Using process.env directly because Env.set only updates a shallow copy (not process.env),
-      // until the scope of the Env API is clarified (test only or runtime?)
-      const envServiceKey = iife(() => {
-        const envAICoreServiceKey = process.env.AICORE_SERVICE_KEY
-        if (envAICoreServiceKey) return envAICoreServiceKey
-        if (auth?.type === "api") {
-          process.env.AICORE_SERVICE_KEY = auth.key
-          return auth.key
-        }
-        return undefined
-      })
+      // Env service mirrors writes to `process.env` (see env/index.ts);
+      // read from there for consistency with the AWS provider above.
+      const resolvedServiceKey = process.env.AICORE_SERVICE_KEY
       const deploymentId = process.env.AICORE_DEPLOYMENT_ID
       const resourceGroup = process.env.AICORE_RESOURCE_GROUP
+      if (!resolvedServiceKey && auth?.type === "api") {
+        process.env.AICORE_SERVICE_KEY = auth.key
+      }
 
       return {
-        autoload: !!envServiceKey,
-        options: envServiceKey ? { deploymentId, resourceGroup } : {},
+        autoload: !!resolvedServiceKey,
+        options: resolvedServiceKey ? { deploymentId, resourceGroup } : {},
         async getModel(sdk: any, modelID: string) {
           return sdk(modelID)
         },
