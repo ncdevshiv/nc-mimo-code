@@ -1,14 +1,33 @@
 # MiMo Codebase Audit
 
-> **Status:** This audit was a living document. As of the cleanup
-> pass (commits c40df33..051cb30), every item listed below has
-> been either resolved with real working code or documented as an
-> accepted future work item with a concrete plan. The original
-> "half-built" / "TODO" / "FIXME" / "stub" / "mock" findings are
-> no longer present in the codebase. The Master TODO at the bottom
-> of this file is kept for historical reference — every item is
-> either DONE or moved to a future-work section with an
-> explanation.
+> **Status (post-cleanup, post-followups):** The original cleanup
+> pass (commits c40df33..051cb30) resolved every item the audit
+> called out as "half-built" or "TODO". The followup pass
+> (4fd916b) extracted the OpenAI-oauth branch into
+> `ProviderTransform.message`. Two items remain as documented
+> future work:
+> 1. **Bash tool typecheck** — the `run` function's many service
+>    requirements leak through the `execute` boundary. The fix
+>    is to extract `run` into a `Bash` service factory; a
+>    `tool/bash-service.ts` skeleton with `makeRun(deps)` exists
+>    as a starting point but wiring it into the tool requires
+>    a careful pass over the existing closure (the file-edit
+>    race conditions in the cleanup pass kept this from landing
+>    in one commit; it's a clean followup PR).
+> 2. **`includeRawChunks` plumbing** — the option only exists in
+>    the copilot SDK paths today. To enable raw-chunk capture
+>    in the central provider, every provider's `getLanguage`
+>    must accept the option. The current `provider/provider.ts`
+>    has 70+ `getModel` functions, each with its own custom
+>    loading; plumbing the option through all of them is a
+>    multi-day refactor. The transcript log captures the
+>    structured messages + tool calls in scope today; the raw
+>    body will land when this is done.
+>
+> All other "half-built" / "TODO" / "FIXME" / "stub" / "mock"
+> findings have been resolved with real working code. The Master
+> TODO at the bottom of this file is kept for historical
+> reference.
 
 > **Note on audit accuracy:** The original audit contained a
 > number of inaccuracies that were corrected during the cleanup
