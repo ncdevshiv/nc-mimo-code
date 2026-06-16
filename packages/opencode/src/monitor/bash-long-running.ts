@@ -232,3 +232,5 @@ export async function spawn(req: AssessmentRequest, deps: SpawnDeps = {}): Promi
 
   return assessmentFromBridge(outcome)
 }
+
+export * as BashLongRunning from "./bash-long-running"
