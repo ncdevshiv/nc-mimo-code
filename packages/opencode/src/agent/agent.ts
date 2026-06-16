@@ -541,7 +541,16 @@ export const layer = Layer.effect(
         yield* plugin.trigger("experimental.chat.system.transform", { model: resolved }, { system })
         const existing = yield* InstanceState.useEffect(state, (s) => s.list())
 
-        // TODO: clean this up so provider specific logic doesnt bleed over
+        // The `isOpenaiOauth` check is provider-specific (an OpenAI
+        // OAuth auth method requires dropping the system messages
+        // and passing them via `providerOptions.instructions` instead
+        // — see provider/provider.ts:354). The right fix is to push
+        // this branch into `ProviderTransform.providerOptions` so
+        // every provider can declare its own param-shape
+        // adjustments via the existing hook. That refactor is
+        // tracked as a follow-up in docs/codebase-audit.md §6.4.3
+        // (it touches every provider's getLanguage flow). The
+        // current shape keeps the OAuth branch local until then.
         const authInfo = yield* auth.get(model.providerID).pipe(Effect.orDie)
         const isOpenaiOauth = model.providerID === "openai" && authInfo?.type === "oauth"
 

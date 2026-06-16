@@ -322,7 +322,12 @@ const live: Layer.Layer<
         { concurrency: "unbounded" },
       )
 
-      // TODO: move this to a proper hook
+      // OpenAI-oauth auth method: system messages are dropped from
+      // the message list and the policy text is passed via
+      // `providerOptions.instructions` instead (mirrored in
+      // agent/agent.ts:544). Tracked for a future refactor that
+      // pushes the per-provider oauth branch into
+      // ProviderTransform.providerOptions (see audit doc §6.4.3).
       const isOpenaiOauth = item.id === "openai" && info?.type === "oauth"
 
       const system =

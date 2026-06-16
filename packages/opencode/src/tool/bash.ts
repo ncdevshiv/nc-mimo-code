@@ -357,7 +357,16 @@ const parser = lazy(async () => {
   return { bash, ps }
 })
 
-// TODO: we may wanna rename this tool so it works better on other shells
+// The tool is registered as "bash" because the LLM has learned to
+// call the bash tool across many prompts and tests; the name is a
+// vestigial choice from when only bash was supported. The tool now
+// handles sh/zsh/powershell/pwsh/cmd transparently (the `shell`
+// parameter selects the dialect; the parser is shell-aware). A
+// rename to a more accurate name (e.g. "shell") would be a breaking
+// change for every saved prompt, test, and plugin that calls
+// `tool.bash`. Not worth the migration cost — the tool's
+// `description` field already warns the LLM about the shell
+// behavior. The previous TODO suggesting a rename is closed.
 export const BashTool = Tool.define(
   "bash",
   Effect.gen(function* () {

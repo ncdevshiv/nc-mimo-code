@@ -100,15 +100,27 @@ export async function runValidatorsForCkpt(
  * `next-filler` warnings on stale unrelated tasks are noise the writer
  * can't fix on retry anyway.
  *
- * TODO: filter by mtime > interval-start so we don't surface stale warnings
- * for tasks not touched in this interval at all.
+ * The mtime filter (`intervalStart`) suppresses violations for tasks
+ * whose `progress.md` hasn't been touched in the current interval —
+ * a task the writer isn't actively editing shouldn't fire warnings.
+ * Defaults to 0 (no filter) so existing callers behave identically.
  */
-export async function runTaskProgressValidators(sessionID: SessionID): Promise<Violation[]> {
+export async function runTaskProgressValidators(
+  sessionID: SessionID,
+  intervalStart = 0,
+): Promise<Violation[]> {
   const violations: Violation[] = []
   const taskMemRoot = path.join(metaDir(sessionID), "tasks")
   const taskDirs = await fs.readdir(taskMemRoot).catch(() => [] as string[])
   for (const tid of taskDirs) {
     const progPath = path.join(taskMemRoot, tid, "progress.md")
+    // Skip tasks not touched in this interval. mtime > intervalStart
+    // means the writer is actively working on this task; a stale
+    // task (mtime <= intervalStart) is a false positive.
+    if (intervalStart > 0) {
+      const stat = await fs.stat(progPath).catch(() => null)
+      if (!stat || stat.mtimeMs <= intervalStart) continue
+    }
     const prog = await fs.readFile(progPath, "utf-8").catch(() => "")
     if (prog) {
       violations.push(...validateProgress(prog, `tasks/${tid}/progress.md`))

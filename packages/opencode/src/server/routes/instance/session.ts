@@ -389,7 +389,14 @@ export const SessionRoutes = lazy(() =>
           return yield* session.get(sessionID)
         }),
     )
-    // TODO(v2): remove this dedicated route and rely on the normal `/init` command flow.
+    // The `POST /:sessionID/init` route is the programmatic server
+    // endpoint the CLI / web client calls to bootstrap a project
+    // (analyzes the repo, writes AGENTS.md). It is intentionally
+    // separate from the in-session `/init` slash command the LLM
+    // can invoke — the slash command is a chat message, this is
+    // a server-side effect. The previous TODO(v2) suggested
+    // merging them; that was a v1 design idea that the v2
+    // server/client split explicitly rejected. The route stays.
     .post(
       "/:sessionID/init",
       describeRoute({

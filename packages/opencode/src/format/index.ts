@@ -136,9 +136,12 @@ export const layer = Layer.effect(
           for (const [name, item] of Object.entries(cfg.formatter)) {
             const builtIn = Formatter[name as keyof typeof Formatter]
 
-            // Ruff and uv are both the same formatter, so disabling either should disable both.
+            // Ruff and uv share the same backend (uv-installed
+            // ruff binary). Disabling either disables both so the
+            // user only has to flip one switch. The proper fix is a
+            // `Formatter` schema with an explicit `sharedBackend`
+            // field; the current check is the minimal change.
             if (["ruff", "uv"].includes(name) && (cfg.formatter.ruff?.disabled || cfg.formatter.uv?.disabled)) {
-              // TODO combine formatters so shared backends like Ruff/uv don't need linked disable handling here.
               delete formatters.ruff
               delete formatters.uv
               continue

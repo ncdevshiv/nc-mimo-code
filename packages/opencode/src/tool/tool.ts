@@ -11,9 +11,6 @@ export interface Metadata {
   [key: string]: any
 }
 
-// TODO: remove this hack
-export type DynamicDescription = (agent: Agent.Info) => Effect.Effect<string>
-
 /**
  * Build a model-readable `formatValidationError` for a tool whose schema is a
  * `z.strictObject({ operation: z.discriminatedUnion("action", [...]) })` —

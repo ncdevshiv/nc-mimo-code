@@ -17,17 +17,18 @@ export const ZodOverride: unique symbol = Symbol.for("effect-zod/override")
  * needs to inspect the user's raw input (e.g. to capture insertion order)
  * before `Schema.Struct` canonicalises the object.
  *
- * TODO: This exists to paper over a missing Effect Schema feature.  The
- * parser canonicalises open struct output (known fields first in
- * declaration order, then catchall fields) before any user-defined
- * transform sees the value, and there is no pre-parse hook — so the
- * user's original property insertion order is gone by the time
- * `Schema.decodeTo` or `middlewareDecoding` runs.
+ * The upstream Effect Schema parser canonicalises open struct output
+ * (known fields first in declaration order, then catchall fields)
+ * before any user-defined transform sees the value, and there is no
+ * pre-parse hook — so the user's original property insertion order is
+ * gone by the time `Schema.decodeTo` or `middlewareDecoding` runs.
+ * This annotation papers over the gap by emitting a Zod-side
+ * `preprocess` that runs before canonicalisation. The `config/permission.ts`
+ * rule-precedence logic (later entries win via `findLast`) depends on
+ * this.
  *
- * That canonicalisation is a reasonable default, but `config/permission.ts`
- * encodes rule precedence in the user's JSON key order (`evaluate.ts`
- * uses `findLast`, so later entries win), which the canonicalisation
- * silently destroys.
+ * This exists until Effect Schema ships a pre-parse hook natively;
+ * when it does, the walker can drop the preprocess path.
  *
  * The cleanest upstream fix would be either:
  *
