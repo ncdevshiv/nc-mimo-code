@@ -15,6 +15,7 @@ import PROMPT_DISTILL from "./prompt/distill.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
+import { REPAIR_SYSTEM_PROMPT } from "@/monitor/tool-failure-repair"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@/global"
@@ -365,6 +366,34 @@ export const layer = Layer.effect(
               user,
             ),
             toolAllowlist: ["read", "write", "edit", "glob", "grep", "memory", "bash"],
+          },
+          // tool-failure-repair — T28 sub-actor for `experimental_repairToolCall`.
+          // The LLM SDK's repair hook (session/llm.ts) calls
+          // `ToolFailureRepair.spawn(req)` when a model produces a tool call that
+          // fails Zod validation. The dispatcher spawns THIS agent with the
+          // tool name, the broken input, the validation error, and the tool's
+          // JSON schema. The sub-agent returns either a corrected input object
+          // or a structured "unfixable" reason (see REPAIR_SYSTEM_PROMPT).
+          //
+          // No tools: the sub-agent must return JSON text only — no recursive
+          // tool calls (which would re-enter the LLM and risk a feedback loop).
+          // Hidden: it is never offered to the main agent as a subagent option;
+          // the only entry point is `ToolFailureRepair.spawn`. The
+          // `mode: "subagent"` declaration is required so `actor.spawn` accepts
+          // it (subagent-vs-peer is decided by the spawner, not the agent).
+          "tool-failure-repair": {
+            name: "tool-failure-repair",
+            mode: "subagent" as const,
+            options: {},
+            native: true,
+            hidden: true,
+            prompt: REPAIR_SYSTEM_PROMPT,
+            permission: Permission.merge(
+              defaults,
+              Permission.fromConfig({ "*": "deny" }),
+              user,
+            ),
+            toolAllowlist: [],
           },
         }
 

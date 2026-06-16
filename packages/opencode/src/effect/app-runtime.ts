@@ -57,6 +57,7 @@ import { TaskRegistry } from "@/task/registry"
 import { WorkflowRuntime } from "@/workflow/runtime"
 import { History } from "@/history"
 import { Memory } from "@/memory"
+import { wireMonitorBridge } from "@/monitor/service"
 import * as BashInteractive from "@/tool/bash-interactive"
 import { memoMap } from "./memo-map"
 
@@ -119,8 +120,23 @@ export const AppLayer = Layer.suspend(() =>
     WorkflowRuntime.defaultLayer,
     Memory.defaultLayer,
     History.defaultLayer,
-  ).pipe(Layer.provideMerge(Observability.layer), Layer.provideMerge(BashInteractive.defaultLayer)),
+  ).pipe(
+    Layer.provideMerge(Observability.layer),
+    Layer.provideMerge(BashInteractive.defaultLayer),
+  ),
 )
+
+// Standalone Effect that installs the live `MonitorBridge` into
+// `monitorBridgeRef` so `getMonitorBridge()` is populated for the
+// tool-failure-repair dispatcher and the bash-long-running monitor.
+// Run once at boot (after the app runtime is built) with the app
+// runtime's context. Kept OUT of the `Layer.mergeAll` above because
+// Layer.mergeAll's type inference of cross-layer requirement
+// satisfaction with namespace re-exports of `Context.Service` tags
+// does not narrow the requirement side correctly in effect
+// 4.0.0-beta.48; running the wire-up as a separate Effect with the
+// runtime's context avoids the inference problem entirely.
+export const wireAppMonitor = wireMonitorBridge
 
 const rt = ManagedRuntime.make(AppLayer, { memoMap })
 type Runtime = Pick<typeof rt, "runSync" | "runPromise" | "runPromiseExit" | "runFork" | "runCallback" | "dispose">
@@ -144,3 +160,15 @@ export const AppRuntime: Runtime = {
   },
   dispose: () => rt.dispose(),
 }
+
+// Wire the live `MonitorBridge` into the module-scoped `monitorBridgeRef`
+// so `getMonitorBridge()` returns the implementation for the
+// tool-failure-repair dispatcher (used by `experimental_repairToolCall`)
+// and the bash-long-running monitor (Phase 3).
+//
+// `wireAppMonitor` is a pure Effect (yields services, captures the
+// Effect context, sets a module-scoped ref) — no async, no I/O — so
+// `runSync` is correct here. Running synchronously guarantees the
+// bridge is populated before any caller of `getMonitorBridge()` runs
+// (LLM tool calls happen long after module load).
+AppRuntime.runSync(wireAppMonitor)

@@ -1,23 +1,22 @@
 // ToolFailureRepair — the deps-free core of the T25 sub-actor
-// (prompt + parser + types). The actual sub-actor invocation
-// (spawning a child session via the actor.run machinery) is T28's
-// work. Splitting it this way:
-//   - T25 (this file): the parts most likely to have a subtle
-//     bug (bad prompt template, bad JSON recovery). Pure, deps-
-//     free, standalone-testable.
-//   - T28: the plumbing that calls `actor.run({ agent: "tool-
-//     failure-repair", ... })` and pipes the response through
-//     `parseRepairResult`. This file's `buildRepairPrompt` and
-//     `parseRepairResult` are the public surface that T28 will
-//     use.
+// (prompt + parser + types), plus the T28 dispatcher that calls
+// the `MonitorBridge` to spawn a sub-actor and pipes the response
+// through `parseRepairResult`. Splitting the prompt/parser (T25)
+// from the dispatcher (T28) keeps the parts most likely to have
+// a subtle bug (bad prompt template, bad JSON recovery) pure and
+// standalone-testable, while the dispatcher is a thin pass-through
+// that delegates to the existing `Actor.Service`.
 //
 // The two halves are deliberately decoupled: T28 can be developed
-// in parallel with T25 (e.g. T28 implements the actor-bridge
-// shared by all dispatcher kinds while T25 is being reviewed).
-// The contract between them is the `RepairRequest` and
-// `RepairResult` types below.
+// in parallel with T25. The contract between them is the
+// `RepairRequest` and `RepairResult` types below; the dispatcher
+// additionally uses the `MonitorBridge` port (see
+// `monitor/actor-bridge.ts`) to talk to the actor subsystem without
+// depending on it directly.
 
+import { Effect } from "effect"
 import { z } from "zod"
+import { getMonitorBridge } from "./actor-bridge"
 
 // ─────────────────────────────────────────────────────────────────
 // Public input / output types
@@ -77,8 +76,12 @@ export type RepairResult =
  * shapes, and any deviation is logged as "unfixable" (the model
  * should not be trusted to repair a tool call if it can't even
  * follow a 2-line output contract).
+ *
+ * Exported (not just a module-local constant) so the agent
+ * registry can install it as the `tool-failure-repair` sub-agent's
+ * system prompt at boot time.
  */
-const REPAIR_SYSTEM_PROMPT = `You are repairing a malformed tool call that another language model produced.
+export const REPAIR_SYSTEM_PROMPT = `You are repairing a malformed tool call that another language model produced.
 
 Your task: given the tool's schema, the original call, and the validation error, return either the corrected input object or a structured "unfixable" reason.
 
@@ -210,3 +213,110 @@ export function parseRepairResult(output: string): RepairResult | null {
   }
   return { kind: "unfixable", reason: result.data.unfixable }
 }
+
+// ─────────────────────────────────────────────────────────────────
+// T28: dispatcher — calls the bridge to spawn a sub-actor and
+// translates the outcome into a `RepairResult`. The default
+// `SpawnDeps` use the global `MonitorBridge`; tests inject a
+// fake bridge to exercise the dispatcher end-to-end without
+// booting the runtime.
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Optional dependencies for `spawn`. All fields have production
+ * defaults that pull from the process-global `MonitorBridge`; tests
+ * inject fakes. `timeoutMs` defaults to 30s (matches the audit's
+ * Phase 1 default; tuned for a single repair attempt — too long and
+ * the LLM is left waiting, too short and a busy model times out).
+ */
+export interface SpawnDeps {
+  readonly bridge?: import("./actor-bridge").MonitorBridge
+  readonly timeoutMs?: number
+  /** Session id under which the sub-actor runs. The bridge passes it
+   * through to `Actor.spawn` so the sub-actor can read parent state
+   * (transcript, etc.) if its `context` mode allows. */
+  readonly sessionID: string
+}
+
+const DEFAULT_TIMEOUT_MS = 30_000
+const REPAIR_AGENT = "tool-failure-repair" as const
+
+/**
+ * Build the LLM-facing `RepairResult` from a `MonitorSpawnResult`.
+ * Pulls the JSON text from `finalText` (or `structured` if the spawn
+ * used a `format` option), then runs it through `parseRepairResult`.
+ *
+ * Maps every non-`success` bridge status to an `unfixable` result
+ * with a descriptive reason — the caller's safety net (the `invalid`
+ * tool fallback) treats `unfixable` and `repaired` distinctly, so
+ * the dispatcher never returns a raw bridge error.
+ */
+function resultFromBridge(outcome: import("./actor-bridge").MonitorSpawnResult): RepairResult {
+  if (outcome.status === "failure") {
+    return { kind: "unfixable", reason: `sub-actor failed: ${outcome.error ?? "unknown error"}` }
+  }
+  if (outcome.status === "cancelled") {
+    return { kind: "unfixable", reason: "sub-actor was cancelled" }
+  }
+  if (outcome.status === "timeout") {
+    return { kind: "unfixable", reason: "sub-actor timed out before producing a result" }
+  }
+
+  // status === "success" — pull the text. `structured` takes precedence
+  // when the spawn used the json_schema format (the validated object is
+  // the authoritative result; the text is just whatever preamble the
+  // model emitted around the tool call).
+  const raw =
+    outcome.structured !== undefined
+      ? typeof outcome.structured === "string"
+        ? outcome.structured
+        : JSON.stringify(outcome.structured)
+      : outcome.finalText
+  if (raw === undefined || raw.length === 0) {
+    return { kind: "unfixable", reason: "sub-actor produced no output" }
+  }
+
+  const parsed = parseRepairResult(raw)
+  if (parsed) return parsed
+  return {
+    kind: "unfixable",
+    reason: "sub-actor output did not match the strict `{\"input\": ...}` or `{\"unfixable\": ...}` shape",
+  }
+}
+
+/**
+ * Spawn the tool-failure-repair sub-actor and return the LLM-driven
+ * repair outcome. Synchronous from the caller's perspective (it
+ * `await`s the bridge), but the bridge is async-by-nature (the AI
+ * SDK's `experimental_repairToolCall` callback is itself `async`).
+ *
+ * Three failure modes are folded into `RepairResult.kind === "unfixable"`:
+ *   - the bridge itself throws (re-thrown after this fn returns — the
+ *     caller decides whether to fall through to the `invalid` tool or
+ *     re-raise);
+ *   - the sub-actor reports `failure`, `cancelled`, or `timeout`;
+ *   - the sub-actor's output doesn't parse.
+ *
+ * The dispatcher's contract is: never throw on a parse/parse-shape
+ * failure; only throw if the bridge itself cannot be invoked (which
+ * means the monitor layer was never installed — a hard programming
+ * error).
+ */
+export async function spawn(req: RepairRequest, deps: SpawnDeps): Promise<RepairResult> {
+  const bridge = deps.bridge ?? getMonitorBridge()
+  const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
+
+  const outcome = await Effect.runPromise(
+    bridge.spawn({
+      sessionID: deps.sessionID,
+      agentType: REPAIR_AGENT,
+      description: REPAIR_AGENT,
+      task: buildRepairPrompt(req),
+      timeoutMs,
+    }),
+  )
+
+  return resultFromBridge(outcome)
+}
+
+export * as ToolFailureRepair from "./tool-failure-repair"

@@ -5,6 +5,9 @@ import { Context, Duration, Effect, Layer, Record, Schedule, Ref } from "effect"
 import * as Stream from "effect/Stream"
 import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema } from "ai"
 import { mergeDeep, pipe } from "remeda"
+import { z } from "zod"
+import { ToolFailureRepair } from "@/monitor/tool-failure-repair"
+import { getMonitorBridge } from "@/monitor/actor-bridge"
 import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
 import { ProviderTransform } from "@/provider"
 import { Config } from "@/config"
@@ -559,9 +562,11 @@ const live: Layer.Layer<
           })
         },
         async experimental_repairToolCall(failed) {
+          // Branch 1: case-fix. Cheap and deterministic — if the lowercased
+          // tool name exists in our tool map, swap it. Always runs first.
           const lower = failed.toolCall.toolName.toLowerCase()
           if (lower !== failed.toolCall.toolName && tools[lower]) {
-            l.info("repairing tool call", {
+            l.info("repairing tool call (case fix)", {
               tool: failed.toolCall.toolName,
               repaired: lower,
             })
@@ -570,6 +575,60 @@ const live: Layer.Layer<
               toolName: lower,
             }
           }
+
+          // Branch 2: LLM-driven repair via the `tool-failure-repair` sub-actor.
+          // Spawns a child session that takes the tool's JSON schema, the
+          // broken call, and the validation error, and returns either a
+          // corrected input object or a structured `unfixable` reason.
+          //
+          // Skipped when the monitor bridge is not populated (test isolation
+          // or partial init) — falls through to the `invalid` tool safety net.
+          const bridge = getMonitorBridgeSafe()
+          if (bridge) {
+            try {
+              const target = tools[failed.toolCall.toolName]
+              const repairInput = parseFailedInput(failed.toolCall.input)
+              const result = await ToolFailureRepair.spawn(
+                {
+                  tool: failed.toolCall.toolName,
+                  input: repairInput,
+                  error: failed.error.message,
+                  schema: toolSchemaToJson(target?.inputSchema),
+                },
+                {
+                  bridge,
+                  sessionID: input.sessionID,
+                },
+              )
+              if (result.kind === "repaired") {
+                l.info("repairing tool call (LLM-repair)", {
+                  tool: failed.toolCall.toolName,
+                })
+                return {
+                  ...failed.toolCall,
+                  // The AI SDK's `input` is a JSON-encoded string; re-encode
+                  // the repaired object so the downstream parser receives
+                  // the same shape as a non-repaired call.
+                  input: JSON.stringify(result.input),
+                }
+              }
+              l.warn("tool call unrepairable (LLM said unfixable)", {
+                tool: failed.toolCall.toolName,
+                reason: result.reason,
+              })
+            } catch (err) {
+              l.warn("tool-failure-repair sub-actor failed", {
+                tool: failed.toolCall.toolName,
+                error: err instanceof Error ? err.message : String(err),
+              })
+            }
+          }
+
+          // Branch 3: invalid-tool fallback. The model's bad call is
+          // rewritten to a single `invalid` tool with the error message
+          // attached; the `invalid` tool's executor (defined elsewhere)
+          // produces a model-readable error response so the LLM can
+          // self-correct on its next turn.
           return {
             ...failed.toolCall,
             input: JSON.stringify({
@@ -730,6 +789,69 @@ export function hasToolCalls(messages: ModelMessage[]): boolean {
     }
   }
   return false
+}
+
+/**
+ * Parse the AI SDK's `toolCall.input` (always a JSON-encoded string per
+ * the SDK contract) into the raw JS value the LLM actually sent. The
+ * repair sub-agent needs the *original* object — not a re-stringified
+ * blob — so the model can see exactly what shape it produced and pick
+ * a fix that preserves intent. Falls back to the raw string when JSON
+ * parsing fails (the model emitted something the SDK couldn't parse
+ * either; the repair sub-agent will see the raw text and may still
+ * produce a fix).
+ */
+function parseFailedInput(input: string): unknown {
+  try {
+    return JSON.parse(input)
+  } catch {
+    return input
+  }
+}
+
+/**
+ * `getMonitorBridge` throws when the ref is unpopulated. The
+ * `experimental_repairToolCall` hook is a hot path: a missing bridge
+ * must skip the LLM-repair branch (fall through to the `invalid` tool
+ * safety net), not throw and crash the LLM call. This wrapper
+ * preserves the throw-on-misuse contract for callers that want it
+ * (the dispatcher itself) while letting the hook degrade gracefully.
+ */
+function getMonitorBridgeSafe() {
+  try {
+    return getMonitorBridge()
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Convert an AI SDK `Tool.inputSchema` (`FlexibleSchema<unknown>`) into
+ * a JSON-schema-shaped plain object the LLM can read in the repair
+ * prompt. The AI SDK accepts three shapes: a Zod schema (zod 3/4), a
+ * StandardSchemaV1, or a raw JSON schema. Zod 4 ships
+ * `z.toJSONSchema()`; the lower-case predicate covers the raw-JSON
+ * case (the schema already has a `type` or `properties` key).
+ *
+ * The LLM is shown the exact same JSON schema the tool emits on the
+ * wire — a repair that passes the prompt's schema check should pass
+ * the runtime zod check too. Returning `null` is safe: the repair
+ * sub-agent will see `schema: null` in the prompt and fall back to
+ * pattern-matching on the error message.
+ */
+function toolSchemaToJson(inputSchema: unknown): unknown {
+  if (inputSchema === undefined || inputSchema === null) return null
+  if (typeof inputSchema !== "object") return null
+  const obj = inputSchema as Record<string, unknown>
+  if ("type" in obj || "properties" in obj) return obj
+  if ("_def" in obj || "_zod" in obj || "$schema" in obj) {
+    try {
+      if (typeof z.toJSONSchema === "function") return z.toJSONSchema(inputSchema as never)
+    } catch {
+      return null
+    }
+  }
+  return obj
 }
 
 export * as LLM from "./llm"

@@ -5,8 +5,16 @@ import {
   getMonitorBridge,
   monitorBridgeRef,
   type MonitorBridge,
+  type MonitorSpawnResult,
   type SpawnInput,
 } from "../../src/monitor/actor-bridge"
+
+const okResult = (overrides: Partial<MonitorSpawnResult> = {}): MonitorSpawnResult => ({
+  status: "success",
+  actorID: "actor-1",
+  sessionID: "sess-1",
+  ...overrides,
+})
 
 describe("actor-bridge: getMonitorBridge throws when ref is unpopulated", () => {
   beforeEach(() => {
@@ -30,7 +38,7 @@ describe("actor-bridge: setMonitorBridge populates the ref", () => {
 
   test("setMonitorBridge returns a disposer that resets the ref", () => {
     const fake: MonitorBridge = {
-      spawn: () => Effect.succeed("ok"),
+      spawn: () => Effect.succeed(okResult()),
     }
     const dispose = setMonitorBridge(fake)
     expect(monitorBridgeRef.current).toBe(fake)
@@ -40,7 +48,7 @@ describe("actor-bridge: setMonitorBridge populates the ref", () => {
 
   test("getMonitorBridge returns the populated bridge", () => {
     const fake: MonitorBridge = {
-      spawn: () => Effect.succeed("ok"),
+      spawn: () => Effect.succeed(okResult()),
     }
     setMonitorBridge(fake)
     expect(getMonitorBridge()).toBe(fake)
@@ -50,7 +58,7 @@ describe("actor-bridge: setMonitorBridge populates the ref", () => {
 describe("actor-bridge: disposer is idempotent", () => {
   test("calling dispose twice does not throw and does not corrupt the ref", () => {
     const fake: MonitorBridge = {
-      spawn: () => Effect.succeed("ok"),
+      spawn: () => Effect.succeed(okResult()),
     }
     const dispose = setMonitorBridge(fake)
     dispose()
@@ -59,8 +67,8 @@ describe("actor-bridge: disposer is idempotent", () => {
   })
 
   test("a second setMonitorBridge replaces the first; the old disposer no-ops", () => {
-    const fake1: MonitorBridge = { spawn: () => Effect.succeed("1") }
-    const fake2: MonitorBridge = { spawn: () => Effect.succeed("2") }
+    const fake1: MonitorBridge = { spawn: () => Effect.succeed(okResult({ actorID: "a1" })) }
+    const fake2: MonitorBridge = { spawn: () => Effect.succeed(okResult({ actorID: "a2" })) }
     const dispose1 = setMonitorBridge(fake1)
     setMonitorBridge(fake2)
     expect(monitorBridgeRef.current).toBe(fake2)
@@ -81,7 +89,7 @@ describe("actor-bridge: a fake bridge can be exercised via getMonitorBridge", ()
       spawn: (input) =>
         Effect.sync(() => {
           captured = input
-          return "ok"
+          return okResult({ actorID: "actor-x", sessionID: input.sessionID })
         }),
     }
     setMonitorBridge(fake)
@@ -90,49 +98,71 @@ describe("actor-bridge: a fake bridge can be exercised via getMonitorBridge", ()
       bridge.spawn({
         sessionID: "sess-1",
         agentType: "tool-failure-repair",
-        prompt: "hello",
+        description: "repair",
+        task: "hello",
         timeoutMs: 5000,
       }),
     )
-    expect(result).toBe("ok")
+    expect(result.status).toBe("success")
+    expect(result.actorID).toBe("actor-x")
     expect(captured).toEqual({
       sessionID: "sess-1",
       agentType: "tool-failure-repair",
-      prompt: "hello",
+      description: "repair",
+      task: "hello",
       timeoutMs: 5000,
     })
   })
 
-  test("a bridge that returns an empty string is observable by the dispatcher", async () => {
+  test("a bridge that returns failure surfaces the error to the caller", async () => {
     const fake: MonitorBridge = {
-      spawn: () => Effect.succeed(""),
+      spawn: () => Effect.succeed(okResult({ status: "failure", error: "boom" })),
     }
     setMonitorBridge(fake)
     const result = await Effect.runPromise(
       getMonitorBridge().spawn({
         sessionID: "sess-2",
         agentType: "bash-long-running",
-        prompt: "p",
+        description: "monitor",
+        task: "p",
         timeoutMs: 1000,
       }),
     )
-    expect(result).toBe("")
+    expect(result.status).toBe("failure")
+    expect(result.error).toBe("boom")
   })
 
-  test("a bridge that throws surfaces the error to the caller", async () => {
+  test("a bridge that returns timeout surfaces status=timeout to the caller", async () => {
     const fake: MonitorBridge = {
-      spawn: () => Effect.fail(new Error("bridge died")),
+      spawn: () => Effect.succeed(okResult({ status: "timeout" })),
     }
     setMonitorBridge(fake)
-    await expect(
-      Effect.runPromise(
-        getMonitorBridge().spawn({
-          sessionID: "sess-3",
-          agentType: "x",
-          prompt: "p",
-          timeoutMs: 1000,
-        }),
-      ),
-    ).rejects.toThrow("bridge died")
+    const result = await Effect.runPromise(
+      getMonitorBridge().spawn({
+        sessionID: "sess-3",
+        agentType: "x",
+        description: "x",
+        task: "p",
+        timeoutMs: 1,
+      }),
+    )
+    expect(result.status).toBe("timeout")
+  })
+
+  test("a bridge that returns cancelled surfaces status=cancelled to the caller", async () => {
+    const fake: MonitorBridge = {
+      spawn: () => Effect.succeed(okResult({ status: "cancelled" })),
+    }
+    setMonitorBridge(fake)
+    const result = await Effect.runPromise(
+      getMonitorBridge().spawn({
+        sessionID: "sess-4",
+        agentType: "x",
+        description: "x",
+        task: "p",
+        timeoutMs: 1,
+      }),
+    )
+    expect(result.status).toBe("cancelled")
   })
 })
