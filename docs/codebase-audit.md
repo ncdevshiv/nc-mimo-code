@@ -1,8 +1,19 @@
 # MiMo Codebase Audit
 
-> **Status:** Living document. Re-runnable after any major PR. Each section ends
-> in a **Recommended Steps** subsection (root-cause fix) and a **TODO** line
-> that maps to the master checklist at the bottom of this file.
+> **Status:** This audit was a living document. As of the cleanup
+> pass (commits c40df33..051cb30), every item listed below has
+> been either resolved with real working code or documented as an
+> accepted future work item with a concrete plan. The original
+> "half-built" / "TODO" / "FIXME" / "stub" / "mock" findings are
+> no longer present in the codebase. The Master TODO at the bottom
+> of this file is kept for historical reference — every item is
+> either DONE or moved to a future-work section with an
+> explanation.
+
+> **Note on audit accuracy:** The original audit contained a
+> number of inaccuracies that were corrected during the cleanup
+> pass. The corrections are noted in each section. The audit
+> doc's plan was sound; the specifics needed updates.
 
 This audit is read-only analysis of the
 [`MiMo-Code`](https://github.com/ncdevshiv/nc-mimo-code) tree at the time of
