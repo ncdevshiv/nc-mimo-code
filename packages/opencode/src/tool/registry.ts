@@ -2,6 +2,7 @@ import { PlanExitTool } from "./plan"
 import { Session } from "../session"
 import { QuestionTool } from "./question"
 import { BashTool } from "./bash"
+import * as BashService from "./bash-service"
 import { EditTool } from "./edit"
 import { GlobTool } from "./glob"
 import { GrepTool } from "./grep"
@@ -398,7 +399,16 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(CrossSpawnSpawner.defaultLayer),
     Layer.provide(Ripgrep.defaultLayer),
     Layer.provide(Truncate.defaultLayer),
-    Layer.provide(Layer.mergeAll(ActorRegistry.defaultLayer, ActorWaiter.defaultLayer)),
+    // BashService.defaultLayer is self-contained (it provides its own
+    // upstream services), so we can merge it in alongside the other
+    // tool/actor singletons here without expanding the chain.
+    Layer.provide(
+      Layer.mergeAll(
+        ActorRegistry.defaultLayer,
+        ActorWaiter.defaultLayer,
+        BashService.defaultLayer,
+      ),
+    ),
     Layer.provide(Team.defaultLayer),
     Layer.provide(
       Layer.mergeAll(

@@ -1,61 +1,37 @@
+// Bash tool — the `BashTool` registration. The service-yielding
+// implementation lives in `./bash-service`; this file is the
+// tool-definition shell that the AI SDK sees.
+//
+// The tool's `execute` boundary is `Effect<ExecuteResult, never, never>`
+// (per `tool.ts`'s `Tool.define` constraint). All the service-yielding
+// work (process spawn, filesystem checks, plugin shell env, truncate
+// file write, etc.) is consolidated behind a single
+// `BashService.Service` yield, which collapses the public R to `never`
+// and keeps the public surface stable. See bash-service.ts for the
+// dependency-injection details.
+
 import z from "zod"
-import os from "os"
-import { createWriteStream, readFileSync } from "node:fs"
-import * as Tool from "./tool"
 import path from "path"
-import DESCRIPTION from "./bash.txt"
-import { Log } from "../util"
-import { Instance } from "../project/instance"
-import { lazy } from "@/util/lazy"
+import { Effect } from "effect"
+import { fileURLToPath } from "url"
 import { Language, type Node } from "web-tree-sitter"
 
 import { AppFileSystem } from "@nc-mimo-code/shared/filesystem"
-import { fileURLToPath } from "url"
+import { lazy } from "@/util/lazy"
 import { Flag } from "@/flag/flag"
 import { Shell } from "@/shell/shell"
+import { Log } from "@/util"
+import { Instance } from "@/project/instance"
 
 import { SessionCwd } from "./session-cwd"
-import { BashArity } from "@/permission/arity"
-import * as Truncate from "./truncate"
-import { Plugin } from "@/plugin"
-import { Effect, Fiber, Stream } from "effect"
-import { ChildProcess } from "effect/unstable/process"
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import * as BashInteractive from "./bash-interactive"
-import { Bus } from "@/bus"
-import { Config } from "@/config"
-import * as BashLongRunning from "@/monitor/bash-long-running"
-import { registerBashHandle, unregisterBashHandle } from "./bash-handle-registry"
-import { BashExited, BashLongRunningWarn, BashStarted } from "@/monitor/bash-events"
+import * as Tool from "./tool"
+import * as BashService from "./bash-service"
+import * as Truncate from "./truncate"
+import DESCRIPTION from "./bash.txt"
 
-const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.NC_MIMO_CODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
 const PS = new Set(["powershell", "pwsh"])
-const CWD = new Set(["cd", "push-location", "set-location"])
-const FILES = new Set([
-  ...CWD,
-  "rm",
-  "cp",
-  "mv",
-  "mkdir",
-  "touch",
-  "chmod",
-  "chown",
-  "cat",
-  // Leave PowerShell aliases out for now. Common ones like cat/cp/mv/rm/mkdir
-  // already hit the entries above, and alias normalization should happen in one
-  // place later so we do not risk double-prompting.
-  "get-content",
-  "set-content",
-  "add-content",
-  "copy-item",
-  "move-item",
-  "remove-item",
-  "new-item",
-  "rename-item",
-])
-const FLAGS = new Set(["-destination", "-literalpath", "-path"])
-const SWITCHES = new Set(["-confirm", "-debug", "-force", "-nonewline", "-recurse", "-verbose", "-whatif"])
 
 const Parameters = z.object({
   command: z.string().describe("The command to execute"),
@@ -79,22 +55,6 @@ const Parameters = z.object({
     ),
 })
 
-type Part = {
-  type: string
-  text: string
-}
-
-type Scan = {
-  dirs: Set<string>
-  patterns: Set<string>
-  always: Set<string>
-}
-
-type Chunk = {
-  text: string
-  size: number
-}
-
 export const log = Log.create({ service: "bash-tool" })
 
 const resolveWasm = (asset: string) => {
@@ -102,232 +62,6 @@ const resolveWasm = (asset: string) => {
   if (asset.startsWith("/") || /^[a-z]:/i.test(asset)) return asset
   const url = new URL(asset, import.meta.url)
   return fileURLToPath(url)
-}
-
-function parts(node: Node) {
-  const out: Part[] = []
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i)
-    if (!child) continue
-    if (child.type === "command_elements") {
-      for (let j = 0; j < child.childCount; j++) {
-        const item = child.child(j)
-        if (!item || item.type === "command_argument_sep" || item.type === "redirection") continue
-        out.push({ type: item.type, text: item.text })
-      }
-      continue
-    }
-    if (
-      child.type !== "command_name" &&
-      child.type !== "command_name_expr" &&
-      child.type !== "word" &&
-      child.type !== "string" &&
-      child.type !== "raw_string" &&
-      child.type !== "concatenation"
-    ) {
-      continue
-    }
-    out.push({ type: child.type, text: child.text })
-  }
-  return out
-}
-
-function source(node: Node) {
-  return (node.parent?.type === "redirected_statement" ? node.parent.text : node.text).trim()
-}
-
-function commands(node: Node) {
-  return node.descendantsOfType("command").filter((child): child is Node => Boolean(child))
-}
-
-function unquote(text: string) {
-  if (text.length < 2) return text
-  const first = text[0]
-  const last = text[text.length - 1]
-  if ((first === '"' || first === "'") && first === last) return text.slice(1, -1)
-  return text
-}
-
-function home(text: string) {
-  if (text === "~") return os.homedir()
-  if (text.startsWith("~/") || text.startsWith("~\\")) return path.join(os.homedir(), text.slice(2))
-  return text
-}
-
-function envValue(key: string) {
-  if (process.platform !== "win32") return process.env[key]
-  const name = Object.keys(process.env).find((item) => item.toLowerCase() === key.toLowerCase())
-  return name ? process.env[name] : undefined
-}
-
-function auto(key: string, cwd: string, shell: string) {
-  const name = key.toUpperCase()
-  if (name === "HOME") return os.homedir()
-  if (name === "PWD") return cwd
-  if (name === "PSHOME") return path.dirname(shell)
-}
-
-function expand(text: string, cwd: string, shell: string) {
-  const out = unquote(text)
-    .replace(/\$\{env:([^}]+)\}/gi, (_, key: string) => envValue(key) || "")
-    .replace(/\$env:([A-Za-z_][A-Za-z0-9_]*)/gi, (_, key: string) => envValue(key) || "")
-    .replace(/\$(HOME|PWD|PSHOME)(?=$|[\\/])/gi, (_, key: string) => auto(key, cwd, shell) || "")
-  return home(out)
-}
-
-function provider(text: string) {
-  const match = text.match(/^([A-Za-z]+)::(.*)$/)
-  if (match) {
-    if (match[1].toLowerCase() !== "filesystem") return
-    return match[2]
-  }
-  const prefix = text.match(/^([A-Za-z]+):(.*)$/)
-  if (!prefix) return text
-  if (prefix[1].length === 1) return text
-  return
-}
-
-function dynamic(text: string, ps: boolean) {
-  if (text.startsWith("(") || text.startsWith("@(")) return true
-  if (text.includes("$(") || text.includes("${") || text.includes("`")) return true
-  if (ps) return /\$(?!env:)/i.test(text)
-  return text.includes("$")
-}
-
-function prefix(text: string) {
-  const match = /[?*[]/.exec(text)
-  if (!match) return text
-  if (match.index === 0) return
-  return text.slice(0, match.index)
-}
-
-function pathArgs(list: Part[], ps: boolean) {
-  if (!ps) {
-    return list
-      .slice(1)
-      .filter((item) => !item.text.startsWith("-") && !(list[0]?.text === "chmod" && item.text.startsWith("+")))
-      .map((item) => item.text)
-  }
-
-  const out: string[] = []
-  let want = false
-  for (const item of list.slice(1)) {
-    if (want) {
-      out.push(item.text)
-      want = false
-      continue
-    }
-    if (item.type === "command_parameter") {
-      const flag = item.text.toLowerCase()
-      if (SWITCHES.has(flag)) continue
-      want = FLAGS.has(flag)
-      continue
-    }
-    out.push(item.text)
-  }
-  return out
-}
-
-function preview(text: string) {
-  if (text.length <= MAX_METADATA_LENGTH) return text
-  return "...\n\n" + text.slice(-MAX_METADATA_LENGTH)
-}
-
-const ERROR_PATTERN = /error|exception|failed|fatal|traceback|panic|exit code/i
-const HEAD_BYTES = Math.floor(Truncate.MAX_BYTES * 0.7)
-const HEAD_LINES = Math.floor(Truncate.MAX_LINES * 0.7)
-
-function head(text: string, maxLines: number, maxBytes: number): string {
-  const lines = text.split("\n")
-  const out: string[] = []
-  let bytes = 0
-  for (let i = 0; i < lines.length && out.length < maxLines; i++) {
-    const size = Buffer.byteLength(lines[i], "utf-8") + (i > 0 ? 1 : 0)
-    if (bytes + size > maxBytes) break
-    out.push(lines[i])
-    bytes += size
-  }
-  return out.join("\n")
-}
-
-function tail(text: string, maxLines: number, maxBytes: number) {
-  const lines = text.split("\n")
-  if (lines.length <= maxLines && Buffer.byteLength(text, "utf-8") <= maxBytes) {
-    return {
-      text,
-      cut: false,
-    }
-  }
-
-  const out: string[] = []
-  let bytes = 0
-  for (let i = lines.length - 1; i >= 0 && out.length < maxLines; i--) {
-    const size = Buffer.byteLength(lines[i], "utf-8") + (out.length > 0 ? 1 : 0)
-    if (bytes + size > maxBytes) {
-      if (out.length === 0) {
-        const buf = Buffer.from(lines[i], "utf-8")
-        let start = buf.length - maxBytes
-        if (start < 0) start = 0
-        while (start < buf.length && (buf[start] & 0xc0) === 0x80) start++
-        out.unshift(buf.subarray(start).toString("utf-8"))
-      }
-      break
-    }
-    out.unshift(lines[i])
-    bytes += size
-  }
-  return {
-    text: out.join("\n"),
-    cut: true,
-  }
-}
-
-const parse = Effect.fn("BashTool.parse")(function* (command: string, ps: boolean) {
-  const tree = yield* Effect.promise(() => parser().then((p) => (ps ? p.ps : p.bash).parse(command)))
-  if (!tree) throw new Error("Failed to parse command")
-  return tree.rootNode
-})
-
-const ask = Effect.fn("BashTool.ask")(function* (ctx: Tool.Context, scan: Scan) {
-  if (scan.dirs.size > 0) {
-    const globs = Array.from(scan.dirs).map((dir) => {
-      if (process.platform === "win32") return AppFileSystem.normalizePathPattern(path.join(dir, "*"))
-      return path.join(dir, "*")
-    })
-    yield* ctx.ask({
-      permission: "external_directory",
-      patterns: globs,
-      always: globs,
-      metadata: {},
-    })
-  }
-
-  if (scan.patterns.size === 0) return
-  yield* ctx.ask({
-    permission: "bash",
-    patterns: Array.from(scan.patterns),
-    always: Array.from(scan.always),
-    metadata: {},
-  })
-})
-
-function cmd(shell: string, name: string, command: string, cwd: string, env: NodeJS.ProcessEnv) {
-  if (process.platform === "win32" && PS.has(name)) {
-    return ChildProcess.make(shell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command], {
-      cwd,
-      env,
-      stdin: "ignore",
-      detached: false,
-    })
-  }
-
-  return ChildProcess.make(command, [], {
-    shell,
-    cwd,
-    env,
-    stdin: "ignore",
-    detached: process.platform !== "win32",
-  })
 }
 
 const parser = lazy(async () => {
@@ -357,407 +91,56 @@ const parser = lazy(async () => {
   return { bash, ps }
 })
 
+const parse = Effect.fn("BashTool.parse")(function* (command: string, ps: boolean) {
+  const tree = yield* Effect.promise(() => parser().then((p) => (ps ? p.ps : p.bash).parse(command)))
+  if (!tree) throw new Error("Failed to parse command")
+  return tree.rootNode
+})
+
+const ask = Effect.fn("BashTool.ask")(function* (ctx: Tool.Context, scan: BashService.Scan) {
+  if (scan.dirs.size > 0) {
+    const globs = Array.from(scan.dirs).map((dir) => {
+      if (process.platform === "win32") return AppFileSystem.normalizePathPattern(path.join(dir, "*"))
+      return path.join(dir, "*")
+    })
+    yield* ctx.ask({
+      permission: "external_directory",
+      patterns: globs,
+      always: globs,
+      metadata: {},
+    })
+  }
+
+  if (scan.patterns.size === 0) return
+  yield* ctx.ask({
+    permission: "bash",
+    patterns: Array.from(scan.patterns),
+    always: Array.from(scan.always),
+    metadata: {},
+  })
+})
+
 // The tool is registered as "bash" because the LLM has learned to
 // call the bash tool across many prompts and tests; the name is a
 // vestigial choice from when only bash was supported. The tool now
 // handles sh/zsh/powershell/pwsh/cmd transparently (the `shell`
-// parameter selects the dialect; the parser is shell-aware). A
-// rename to a more accurate name (e.g. "shell") would be a breaking
-// change for every saved prompt, test, and plugin that calls
-// `tool.bash`. Not worth the migration cost — the tool's
-// `description` field already warns the LLM about the shell
-// behavior. The previous TODO suggesting a rename is closed.
+// field in `BashService.BashRunInput` is set per-call to the
+// detected shell).
+//
+// `BashService.defaultLayer` is `Effect.provide`'d at this level
+// because `BashService.defaultLayer` is self-contained (it provides
+// its own upstream services). The init Effect's R is `BashService.Service`
+// (a single service), but the public `Info` R is `never` because the
+// `.pipe(Effect.provide(BashService.defaultLayer))` resolves it
+// before `Tool.define` reads the R. This means the production
+// `AppLayer` and the various test fixtures that mount `BashTool`
+// standalone don't have to know about `BashService.Service` — it's
+// satisfied locally. The audit doc's "no `BashService` leak past
+// the tool boundary" invariant is what this preserves.
 export const BashTool = Tool.define(
   "bash",
   Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner
-    const fs = yield* AppFileSystem.Service
-    const trunc = yield* Truncate.Service
-    const plugin = yield* Plugin.Service
-
-    const cygpath = Effect.fn("BashTool.cygpath")(function* (shell: string, text: string) {
-      const lines = yield* spawner
-        .lines(ChildProcess.make(shell, ["-lc", 'cygpath -w -- "$1"', "_", text]))
-        .pipe(Effect.catch(() => Effect.succeed([] as string[])))
-      const file = lines[0]?.trim()
-      if (!file) return
-      return AppFileSystem.normalizePath(file)
-    })
-
-    const resolvePath = Effect.fn("BashTool.resolvePath")(function* (text: string, root: string, shell: string) {
-      if (process.platform === "win32") {
-        if (Shell.posix(shell) && text.startsWith("/") && AppFileSystem.windowsPath(text) === text) {
-          const file = yield* cygpath(shell, text)
-          if (file) return file
-        }
-        return AppFileSystem.normalizePath(path.resolve(root, AppFileSystem.windowsPath(text)))
-      }
-      return path.resolve(root, text)
-    })
-
-    const argPath = Effect.fn("BashTool.argPath")(function* (arg: string, cwd: string, ps: boolean, shell: string) {
-      const text = ps ? expand(arg, cwd, shell) : home(unquote(arg))
-      const file = text && prefix(text)
-      if (!file || dynamic(file, ps)) return
-      const next = ps ? provider(file) : file
-      if (!next) return
-      return yield* resolvePath(next, cwd, shell)
-    })
-
-    const collect = Effect.fn("BashTool.collect")(function* (root: Node, cwd: string, ps: boolean, shell: string) {
-      const scan: Scan = {
-        dirs: new Set<string>(),
-        patterns: new Set<string>(),
-        always: new Set<string>(),
-      }
-
-      for (const node of commands(root)) {
-        const command = parts(node)
-        const tokens = command.map((item) => item.text)
-        const cmd = ps ? tokens[0]?.toLowerCase() : tokens[0]
-
-        if (cmd && FILES.has(cmd)) {
-          for (const arg of pathArgs(command, ps)) {
-            const resolved = yield* argPath(arg, cwd, ps, shell)
-            log.info("resolved path", { arg, resolved })
-            if (!resolved || Instance.containsPath(resolved)) continue
-            const dir = (yield* fs.isDir(resolved)) ? resolved : path.dirname(resolved)
-            scan.dirs.add(dir)
-          }
-        }
-
-        if (tokens.length && (!cmd || !CWD.has(cmd))) {
-          scan.patterns.add(source(node))
-          scan.always.add(BashArity.prefix(tokens).join(" ") + " *")
-        }
-      }
-
-      return scan
-    })
-
-    const shellEnv = Effect.fn("BashTool.shellEnv")(function* (ctx: Tool.Context, cwd: string) {
-      const extra = yield* plugin.trigger(
-        "shell.env",
-        { cwd, sessionID: ctx.sessionID, callID: ctx.callID },
-        { env: {} },
-      )
-      return {
-        ...process.env,
-        ...extra.env,
-      }
-    })
-
-    const run = Effect.fn("BashTool.run")(function* (
-      input: {
-        shell: string
-        name: string
-        command: string
-        cwd: string
-        env: NodeJS.ProcessEnv
-        timeout: number
-        description: string
-      },
-      ctx: Tool.Context,
-    ) {
-      const bytes = Truncate.MAX_BYTES
-      const lines = Truncate.MAX_LINES
-      const keep = bytes * 2
-      let full = ""
-      let last = ""
-      const list: Chunk[] = []
-      let used = 0
-      let file = ""
-      let sink: ReturnType<typeof createWriteStream> | undefined
-      let cut = false
-      let expired = false
-      let aborted = false
-
-      yield* ctx.metadata({
-        metadata: {
-          output: "",
-          description: input.description,
-        },
-      })
-
-      const code: number | null = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const handle = yield* spawner.spawn(cmd(input.shell, input.name, input.command, input.cwd, input.env))
-          const startedAt = Date.now()
-
-          // Register the child handle with the module-scoped registry so
-          // the bash long-running monitor (Phase 3) can kill the child
-          // when its sub-actor returns `kind: "terminate"`. The registry
-          // holds a `pid -> handle` map; unregister on exit/cleanup.
-          // Wrapped in a `try` block so a registry-throw doesn't break
-          // the bash call — the handle is best-effort observable.
-          yield* Effect.sync(() => {
-            try {
-              registerBashHandle({
-                pid: handle.pid,
-                kill: () => handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie),
-              })
-            } catch {
-              // intentionally swallowed — registry failure must not
-              // fail the bash invocation
-            }
-          })
-
-          // Publish BashStarted so external observers (TUI banner,
-          // plugin subscribers) can react. The long-running monitor
-          // is owned by THIS function (forked below); the bus event
-          // is the observability hook.
-          yield* Effect.promise(() =>
-            Bus.publish(BashStarted, {
-              sessionID: ctx.sessionID,
-              messageID: ctx.messageID,
-              callID: ctx.callID ?? "unknown",
-              command: input.command,
-              ...(input.description !== undefined ? { description: input.description } : {}),
-              pid: handle.pid,
-              startedAt,
-            }),
-          ).pipe(Effect.ignore)
-
-          // Fork the long-running monitor: after `monitorThresholdMs`,
-          // ask a sub-actor whether the command is making progress.
-          // The fork is cancelled when the child exits (via
-          // `Fiber.interrupt` below) so the sub-actor is never
-          // spawned for a command that already finished.
-          //
-          // `Config.Service` is yielded INSIDE the fork body so its
-          // requirement stays local to the fork — the `run` function's
-          // outer signature must not gain a Config dependency
-          // (that would break the tool's `execute` type, which is
-          // invoked from the tool runtime without Config in scope).
-          //
-          // The fork body is wrapped in `Effect.suspend` and asserted
-          // to `Effect<void, never, Config.Service>` so the `R` stays
-          // narrow. Without the assertion the body's complex yield
-          // chain infers as `unknown`, which breaks the `Tool.define`
-          // contract (the `wrap` function stores `execute` as
-          // `Effect<ExecuteResult, never, never>` and rejects `unknown`).
-          const monitorFiber: Fiber.Fiber<void, never> = yield* Effect.forkChild(
-            Effect.suspend(() =>
-              Effect.gen(function* () {
-                const config = yield* Config.Service
-                const cfg = yield* config.get()
-                const thresholdMs = cfg.monitor?.defaultTimeoutMs ?? 30_000
-                yield* Effect.sleep(`${thresholdMs} millis`)
-
-                const assessment: BashLongRunning.Assessment = yield* Effect.tryPromise(() =>
-                  BashLongRunning.spawn({
-                    sessionID: ctx.sessionID,
-                    command: input.command,
-                    pid: handle.pid,
-                    elapsedMs: Date.now() - startedAt,
-                    ...(input.description !== undefined ? { description: input.description } : {}),
-                  }),
-                ).pipe(
-                  Effect.catchCause(() =>
-                    Effect.succeed<BashLongRunning.Assessment>({
-                      kind: "continue",
-                      reason: "monitor sub-actor errored",
-                    }),
-                  ),
-                )
-
-                if (assessment.kind === "continue") return
-                if (assessment.kind === "warn") {
-                  yield* Effect.promise(() =>
-                    Bus.publish(BashLongRunningWarn, {
-                      sessionID: ctx.sessionID,
-                      messageID: ctx.messageID,
-                      callID: ctx.callID ?? "unknown",
-                      reason: assessment.reason,
-                      elapsedMs: Date.now() - startedAt,
-                    }),
-                  ).pipe(Effect.ignore)
-                  return
-                }
-                // kind === "terminate" — kill the child and surface a
-                // warning so the TUI shows the action. The handle is
-                // still in the registry; `handle.kill` is the
-                // authoritative kill.
-                yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.ignore)
-                yield* Effect.promise(() =>
-                  Bus.publish(BashLongRunningWarn, {
-                    sessionID: ctx.sessionID,
-                    messageID: ctx.messageID,
-                    callID: ctx.callID ?? "unknown",
-                    reason: `terminated: ${assessment.reason}`,
-                    elapsedMs: Date.now() - startedAt,
-                  }),
-                ).pipe(Effect.ignore)
-              }),
-            ) as Effect.Effect<void, never, Config.Service>,
-          )
-
-          yield* Effect.forkScoped(
-            Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
-              const size = Buffer.byteLength(chunk, "utf-8")
-              list.push({ text: chunk, size })
-              used += size
-              while (used > keep && list.length > 1) {
-                const item = list.shift()
-                if (!item) break
-                used -= item.size
-                cut = true
-              }
-
-              last = preview(last + chunk)
-
-              if (file) {
-                sink?.write(chunk)
-              } else {
-                full += chunk
-                if (Buffer.byteLength(full, "utf-8") > bytes) {
-                  return trunc.write(full, "bash").pipe(
-                    Effect.andThen((next) =>
-                      Effect.sync(() => {
-                        file = next
-                        cut = true
-                        sink = createWriteStream(next, { flags: "a" })
-                        full = ""
-                      }),
-                    ),
-                    Effect.andThen(
-                      ctx.metadata({
-                        metadata: {
-                          output: last,
-                          description: input.description,
-                        },
-                      }),
-                    ),
-                  )
-                }
-              }
-
-              return ctx.metadata({
-                metadata: {
-                  output: last,
-                  description: input.description,
-                },
-              })
-            }),
-          )
-
-          const abort = Effect.callback<void>((resume) => {
-            if (ctx.abort.aborted) return resume(Effect.void)
-            const handler = () => resume(Effect.void)
-            ctx.abort.addEventListener("abort", handler, { once: true })
-            return Effect.sync(() => ctx.abort.removeEventListener("abort", handler))
-          })
-
-          const timeout = Effect.sleep(`${input.timeout + 100} millis`)
-
-          const exit = yield* Effect.raceAll([
-            handle.exitCode.pipe(Effect.map((code) => ({ kind: "exit" as const, code }))),
-            abort.pipe(Effect.map(() => ({ kind: "abort" as const, code: null }))),
-            timeout.pipe(Effect.map(() => ({ kind: "timeout" as const, code: null }))),
-          ])
-
-          if (exit.kind === "abort") {
-            aborted = true
-            yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
-          }
-          if (exit.kind === "timeout") {
-            expired = true
-            yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
-          }
-
-          // Cancel the long-running monitor: the child has exited,
-          // so spawning a sub-actor to ask "is this hung?" is
-          // wasted work. The monitor handles its own cleanup
-          // (cancelled forks release the sub-actor's resources).
-          yield* Fiber.interrupt(monitorFiber).pipe(Effect.ignore)
-
-          // Unregister + publish BashExited in a single tail.
-          yield* Effect.sync(() => unregisterBashHandle(handle.pid))
-          yield* Effect.promise(() =>
-            Bus.publish(BashExited, {
-              sessionID: ctx.sessionID,
-              messageID: ctx.messageID,
-              callID: ctx.callID ?? "unknown",
-              pid: handle.pid,
-              exitCode: exit.kind === "exit" ? exit.code : null,
-              reason:
-                exit.kind === "abort"
-                  ? "abort"
-                  : exit.kind === "timeout"
-                    ? "timeout"
-                    : "exit",
-            }),
-          ).pipe(Effect.ignore)
-
-          return exit.kind === "exit" ? exit.code : null
-        }),
-      ).pipe(Effect.orDie)
-
-      const meta: string[] = []
-      if (expired) {
-        meta.push(
-          `bash tool terminated command after exceeding timeout ${input.timeout} ms. If this command is expected to take longer and is not waiting for interactive input, retry with a larger timeout value in milliseconds.`,
-        )
-      }
-      if (aborted) meta.push("User aborted the command")
-      const raw = list.map((item) => item.text).join("")
-      const end = tail(raw, lines, bytes)
-      if (end.cut) cut = true
-      if (!file && end.cut) {
-        file = yield* trunc.write(raw, "bash")
-      }
-
-      let output = end.text
-      if (!output) output = "(no output)"
-
-      if (cut && file) {
-        // Check if tail contains error patterns — if so, prepend head for context
-        const tailScan = end.text.length > 2048 ? end.text.slice(-2048) : end.text
-        const hasErrors = ERROR_PATTERN.test(tailScan)
-        if (hasErrors) {
-          let fileContent: string | undefined
-          try {
-            fileContent = readFileSync(file, "utf-8")
-          } catch {
-            fileContent = undefined
-          }
-          if (fileContent) {
-            const headText = head(fileContent, HEAD_LINES, HEAD_BYTES)
-            output = `...output truncated (head+tail shown due to errors)...\n\nFull output saved to: ${file}\n\n${headText}\n\n...middle omitted...\n\n${end.text}`
-          } else {
-            output = `...output truncated...\n\nFull output saved to: ${file}\n\n` + output
-          }
-        } else {
-          output = `...output truncated...\n\nFull output saved to: ${file}\n\n` + output
-        }
-      }
-
-      if (meta.length > 0) {
-        output += "\n\n<bash_metadata>\n" + meta.join("\n") + "\n</bash_metadata>"
-      }
-      if (sink) {
-        const stream = sink
-        yield* Effect.promise(
-          () =>
-            new Promise<void>((resolve) => {
-              stream.end(() => resolve())
-              stream.on("error", () => resolve())
-            }),
-        )
-      }
-
-      return {
-        title: input.description,
-        metadata: {
-          output: last || preview(output),
-          exit: code,
-          description: input.description,
-          truncated: cut,
-          ...(cut && file ? { outputPath: file } : {}),
-        },
-        output,
-      }
-    })
+    const svc = yield* BashService.Service
 
     return () =>
       Effect.sync(() => {
@@ -788,21 +171,20 @@ export const BashTool = Tool.define(
             Effect.gen(function* () {
               const effectiveCwd = SessionCwd.get(ctx.sessionID)
               const cwd = params.workdir
-                ? yield* resolvePath(params.workdir, effectiveCwd, shell)
+                ? yield* svc.resolvePath(params.workdir, effectiveCwd, shell)
                 : effectiveCwd
               if (params.timeout !== undefined && params.timeout < 0) {
                 throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
               }
               const timeout = params.timeout ?? DEFAULT_TIMEOUT
               const ps = PS.has(name)
-              const root = yield* parse(params.command, ps)
-              const scan = yield* collect(root, cwd, ps, shell)
+              const root: Node = yield* parse(params.command, ps)
+              const scan = yield* svc.collect(root, cwd, ps, shell)
               if (!Instance.containsPath(cwd)) scan.dirs.add(cwd)
               yield* ask(ctx, scan)
 
-              // Interactive mode: hand terminal to user for direct interaction
               if (params.interactive) {
-                const env = yield* shellEnv(ctx, cwd)
+                const env = yield* svc.shellEnv(ctx, cwd)
                 yield* ctx.metadata({
                   metadata: {
                     output: "(waiting for user interaction...)",
@@ -831,13 +213,13 @@ export const BashTool = Tool.define(
                 }
               }
 
-              return yield* run(
+              return yield* svc.run(
                 {
                   shell,
                   name,
                   command: params.command,
                   cwd,
-                  env: yield* shellEnv(ctx, cwd),
+                  env: yield* svc.shellEnv(ctx, cwd),
                   timeout,
                   description: params.description,
                 },
@@ -847,4 +229,4 @@ export const BashTool = Tool.define(
         }
       })
   }),
-)
+).pipe(Effect.provide(BashService.defaultLayer))

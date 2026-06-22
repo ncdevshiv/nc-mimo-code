@@ -11,18 +11,13 @@ import type { Permission } from "../../src/permission"
 import { Agent } from "../../src/agent/agent"
 import { Truncate } from "../../src/tool"
 import { SessionID, MessageID } from "../../src/session/schema"
-import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
-import { AppFileSystem } from "@nc-mimo-code/shared/filesystem"
-import { Plugin } from "../../src/plugin"
 
+// `BashService.defaultLayer` is self-contained (it provides its own
+// upstream services). The Truncate and Agent layers are still
+// required because the AI SDK's `Tool.define` wrapper (`tool.ts`)
+// adds `Truncate.Service | Agent.Service` to every tool's R.
 const runtime = ManagedRuntime.make(
-  Layer.mergeAll(
-    CrossSpawnSpawner.defaultLayer,
-    AppFileSystem.defaultLayer,
-    Plugin.defaultLayer,
-    Truncate.defaultLayer,
-    Agent.defaultLayer,
-  ),
+  Layer.mergeAll(Truncate.defaultLayer, Agent.defaultLayer),
 )
 
 function initBash() {
