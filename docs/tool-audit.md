@@ -218,8 +218,15 @@ performed the work.
   maintainer comment at `actor.ts:255` flags this. Should be derived
   from the Zod schema. (Documented.)
 - **No permission ask for `task done` / `task abandon`** — the
-  task tool is essentially unguarded. (Documented.)
-- **No `task revise` action** for in-progress tasks. (Documented.)
+  task tool is essentially unguarded. (Fixed: both terminal-state
+  transitions now `ctx.ask({ permission: "task", patterns: [id],
+  … })` before flipping the task. Non-terminal actions
+  (start/block/unblock) remain unguarded — they are reversible.
+  3 tests in `test/tool/task.test.ts`.)
+- **No `task revise` action** for in-progress tasks. (Fixed:
+  added `task revise <id> [--summary <text>] [--note <text>]`
+  (JSON form mirrors the shell). At least one of `summary` or
+  `note` is required. 3 tests in `test/tool/task.test.ts`.)
 
 ### Web tools
 
@@ -233,19 +240,40 @@ performed the work.
 ### Memory/History tools
 
 - **`memory` is a misnomer** — it only reads. Rename to
-  `memory_search` or add a `write` operation. (Documented.)
+  `memory_search` or add a `write` operation. (Fixed: `memory`
+  tool gained `operation: "write"` with `key`, `body`, `scope`,
+  `scope_id`, `type` params; `Memory.Service` gained a `write`
+  method that resolves the path via `buildPath` (with the
+  existing `..`/absolute-path traversal guard), writes
+  atomically via `writeAtomicWithDirs`, and returns
+  `{ path, created }`. The default `operation` stays `search`
+  for back-compat. 6 tests in `test/memory/write.test.ts`.)
 - **`history` has no `result_format: ids | snippets | full`
   flag** — a search for a list of session IDs is the same cost as
-  a search for full text. (Documented.)
+  a search for full text. (Fixed: `history` tool gained
+  `result_format: "ids" | "snippets" | "full"` (default
+  `snippets` — back-compat). `ids` is the cheap "which sessions
+  touched X?" path; `full` is the untruncated body. 6 tests in
+  `test/tool/history-result-format.test.ts`.)
 
 ### Skill/LSP/Workflow tools
 
 - **No `workflow list` or `workflow logs` operations** — obvious
-  gaps. (Documented.)
+  gaps. (Fixed: workflow tool gained `operation: "list"` (with
+  `include_terminal` filter, scoped to current session by
+  default) and `operation: "logs"` (reads the per-run journal
+  file, newest-first tail with optional `limit`).
+  `WorkflowPersistence.readJournal` reads the existing
+  `<data>/workflow/<runID>.jsonl` file (handles missing/torn
+  lines). 4 tests in `test/workflow/list-logs.test.ts`.)
 - **`lsp` has no `completion` or `codeAction`** even though
   completion is the most useful LSP call. (Documented.)
 - **No `skill` cache_for flag** — every call re-dumps the file
-  list. (Documented.)
+  list. (Fixed: `skill` tool gained `cache_for: number (seconds,
+  default 0)`. The file list (the `<skill_files>` block — the
+  ripgrep hot path) is cached in a process-local `Map` keyed by
+  skill name for the requested TTL; the body is always re-read
+  fresh. 2 new tests in `test/tool/skill.test.ts`.)
 
 ### Cross-cutting
 
