@@ -2,7 +2,7 @@
 // response that flows through `session/llm.ts`. Each line is a JSON
 // object with the shape:
 //
-//   { ts, sessionID, messageID, role, model, request, response, tool_calls }
+//   { ts, sessionID, messageID, role, model, request, response, raw_chunks, tool_calls }
 //
 // The audit's §4 LLM-transcript log feature. The log is the single
 // source of truth for "what exactly did the model send, including the
@@ -16,12 +16,23 @@
 // when it exceeds `config.log.maxBytesPerFile`).
 //
 // `request` / `response` are stored as raw JSON when the provider
-// supports `includeRawChunks` (currently only the copilot SDK paths);
-// for other providers we store the structured `messages` and the
-// response parts we already have in scope. A future pass plumbs
-// `includeRawChunks` through the main provider abstraction (audit
-// §4.4.1 was wrong: the option only exists in the copilot SDK files
-// today; the central provider doesn't pass it through).
+// supports `includeRawChunks`. `raw_chunks` (optional) is the
+// per-chunk raw stream bodies captured from the AI SDK's
+// `fullStream` when `includeRawChunks` is enabled. The flag is
+// exposed in two ways:
+//   1. Per-SDK `providerOptions[<sdk-key>].includeRawChunks` (e.g.
+//      `providerOptions.copilot.includeRawChunks`). The in-tree
+//      Copilot SDK paths (`provider/sdk/copilot/*`) emit raw parts
+//      deterministically from the SSE wire format.
+//   2. Top-level `streamText({ includeRawChunks: true })` — the AI
+//      SDK 6 stream wrapper synthesizes raw parts for every upstream
+//      SDK (`@ai-sdk/openai`, `@ai-sdk/anthropic`, etc.) without any
+//      per-provider plumbing. The `session/llm.ts` call site passes
+//      this when the per-session flag is on.
+// The `session/llm.ts:onFinish` callback consumes `result.fullStream`,
+// filters `{ type: "raw" }` parts, and writes them to `raw_chunks`
+// here. The `request` / `response` fields stay as the AI SDK's
+// normalized `LanguageModelResponseMetadata` regardless.
 //
 // Redaction: the `Authorization`, `Cookie`, and any `sensitive`-tagged
 // keys are stripped before write. The list is configurable via
@@ -46,24 +57,29 @@ const log = Log.create({ service: "llm-log" })
 
 const REDACTED = '"[REDACTED]"'
 
+// Default set of lowercased keys whose values are redacted. The
+// module-level `redactKeys` set is seeded with these at module load
+// and may be replaced wholesale via `setRedactKeys(...)` from the
+// boot-time wire-up (`effect/wire-app-transcript-log.ts`). The
+// comparison is always case-insensitive.
+const DEFAULT_REDACT_KEYS = [
+  "Authorization",
+  "Cookie",
+  "Set-Cookie",
+  "X-Api-Key",
+  "api-key",
+  "apikey",
+  "password",
+  "token",
+  "access_token",
+  "refresh_token",
+]
+
 // Lowercased once at module load. `redact` compares each input key
-// (lowercased) against this set; the original case is preserved in
-// the output so the redacted field still appears in the JSON
+// (lowercased) against this set; the original case is preserved in the
+// output so the redacted field still appears in the JSON
 // (just with the value replaced).
-const REDACT_KEYS_LOWER = new Set(
-  [
-    "Authorization",
-    "Cookie",
-    "Set-Cookie",
-    "X-Api-Key",
-    "api-key",
-    "apikey",
-    "password",
-    "token",
-    "access_token",
-    "refresh_token",
-  ].map((k) => k.toLowerCase()),
-)
+let redactKeys: ReadonlySet<string> = new Set(DEFAULT_REDACT_KEYS.map((k) => k.toLowerCase()))
 
 /**
  * Redact sensitive keys from an arbitrary JSON value. Replaces
@@ -77,7 +93,7 @@ export function redact(value: unknown): unknown {
   if (typeof value === "object") {
     const out: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (REDACT_KEYS_LOWER.has(k.toLowerCase())) {
+      if (redactKeys.has(k.toLowerCase())) {
         out[k] = REDACTED
       } else {
         out[k] = redact(v)
@@ -86,6 +102,18 @@ export function redact(value: unknown): unknown {
     return out
   }
   return value
+}
+
+/**
+ * Replace the redact-keys set wholesale. Keys are matched
+ * case-insensitively. Pass `undefined` to reset to the default set
+ * (`Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, `api-key`,
+ * `apikey`, `password`, `token`, `access_token`, `refresh_token`).
+ * Used by the boot-time wire-up so `config.log.redactKeys` overrides
+ * the defaults.
+ */
+export function setRedactKeys(keys: ReadonlyArray<string> | undefined): void {
+  redactKeys = new Set((keys ?? DEFAULT_REDACT_KEYS).map((k) => k.toLowerCase()))
 }
 
 export interface TranscriptEvent {
@@ -101,12 +129,22 @@ export interface TranscriptEvent {
   /** The raw response body when `includeRawChunks` is enabled;
    * otherwise the structured `content` / `tool_calls` parts. */
   readonly response: unknown
+  /**
+   * Per-chunk raw SSE / transport bodies captured from the AI SDK's
+   * `fullStream` when `includeRawChunks` is enabled. Each entry has
+   * the shape `{ type: "raw", rawValue: <string|object> }` as
+   * defined by the AI SDK v3 stream protocol. Persisted only when the
+   * flag is on at LLM-call time; otherwise the field is omitted.
+   * Always redacted before write. See `session/llm.ts:onFinish`.
+   */
+  readonly raw_chunks?: ReadonlyArray<{ type: "raw"; rawValue: unknown }>
   /** Tool calls extracted from the response (for grep-ability). */
   readonly tool_calls?: Array<{ toolName: string; args: unknown }>
 }
 
 let enabled = false
 let logDirOverride: string | undefined
+let includeRawChunks = false
 
 /**
  * Enable / disable the transcript log. Disabled by default to
@@ -116,6 +154,24 @@ let logDirOverride: string | undefined
  */
 export function setEnabled(value: boolean): void {
   enabled = value
+}
+
+/**
+ * Enable / disable raw-chunk capture. When true, providers whose SDK
+ * respects `includeRawChunks` (currently only the in-tree GitHub
+ * Copilot SDK) emit raw SSE chunk bodies as `{type: "raw", rawValue}`
+ * stream parts, which `session/llm.ts` persists to the transcript log
+ * in place of (or alongside) the structured `messages`. PR-2 step 1.
+ */
+export function setIncludeRawChunks(value: boolean): void {
+  includeRawChunks = value
+}
+
+/**
+ * Read the current raw-chunk capture flag. PR-2 step 1.
+ */
+export function getIncludeRawChunks(): boolean {
+  return includeRawChunks
 }
 
 /**
@@ -136,7 +192,13 @@ export function setLogDir(dir: string | undefined): void {
 export async function append(event: TranscriptEvent): Promise<void> {
   if (!enabled) return
   const file = transcriptPath(event.sessionID)
-  const line = JSON.stringify({ ...event, request: redact(event.request), response: redact(event.response) }) + "\n"
+  const line =
+    JSON.stringify({
+      ...event,
+      request: redact(event.request),
+      response: redact(event.response),
+      raw_chunks: event.raw_chunks ? redact(event.raw_chunks) : undefined,
+    }) + "\n"
   try {
     await mkdir(dirname(file), { recursive: true })
     await appendFile(file, line, "utf8")
@@ -180,6 +242,9 @@ export const TranscriptLog = {
   redact,
   setEnabled,
   setLogDir,
+  setRedactKeys,
+  setIncludeRawChunks,
+  getIncludeRawChunks,
 } as const
 
 /**

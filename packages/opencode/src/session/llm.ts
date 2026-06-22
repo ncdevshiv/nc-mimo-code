@@ -15,6 +15,7 @@ import { Config } from "@/config"
 import { Instance } from "@/project/instance"
 import type { Agent } from "@/agent/agent"
 import type { MessageV2 } from "./message-v2"
+import { extractToolCalls } from "./llm-extract"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
 import { Flag } from "@/flag/flag"
@@ -352,12 +353,20 @@ const live: Layer.Layer<
         !input.small && input.model.variants && input.user.model.variant
           ? input.model.variants[input.user.model.variant]
           : {}
+      // PR-2 step 3 — thread `includeRawChunks` into the per-model
+      // provider-options bag so `ProviderTransform.options(...)` can
+      // see it and emit it for the Copilot SDK path. The runtime
+      // toggle lives on `TranscriptLog.getIncludeRawChunks()`; we
+      // gate on `model.api.npm === "@ai-sdk/github-copilot"` because
+      // no other in-tree SDK reads this flag.
+      const includeRawChunks =
+        TranscriptLog.getIncludeRawChunks() && input.model.api.npm === "@ai-sdk/github-copilot"
       const base = input.small
         ? ProviderTransform.smallOptions(input.model)
         : ProviderTransform.options({
             model: input.model,
             sessionID: input.sessionID,
-            providerOptions: item.options,
+            providerOptions: { ...item.options, ...(includeRawChunks ? { includeRawChunks: true } : {}) },
           })
       const options: Record<string, any> = pipe(
         base,
@@ -557,7 +566,24 @@ const live: Layer.Layer<
         toolCount: Object.keys(tools).length,
       })
 
+      // Per-invocation raw-chunk buffer. Populated by `onChunk` when
+      // `includeRawChunks` is true at the AI SDK 6 stream level (see
+      // the `streamText` call below). Persisted to
+      // `TranscriptEvent.raw_chunks` in `onFinish`. Cleared at the
+      // start of every assistant-message turn.
+      const rawChunks: Array<{ type: "raw"; rawValue: unknown }> = []
+
     return streamText({
+      // Per-call raw-chunk capture. When `TranscriptLog.getIncludeRawChunks()`
+      // is true (set by `config.log.includeRawChunks` at boot), this is
+      // passed to the AI SDK 6 stream wrapper which synthesizes raw
+      // `{ type: "raw", rawValue }` parts on `fullStream` for every
+      // upstream SDK (`@ai-sdk/openai`, `@ai-sdk/anthropic`, etc.) —
+      // not just the in-tree Copilot SDK. The `onChunk` callback below
+      // collects those raw parts into `rawChunks`; `onFinish` persists
+      // them to the transcript log. See
+      // `monitor/llm-transcript.ts:TranscriptEvent.raw_chunks`.
+      includeRawChunks: TranscriptLog.getIncludeRawChunks(),
       onError(error) {
         l.debug("streamText error", {
           messageID: input.user.id,
@@ -568,6 +594,16 @@ const live: Layer.Layer<
           error,
         })
       },
+      onChunk({ chunk }) {
+        // Filter for `type: "raw"` parts only. The AI SDK 6 contract
+        // for `onChunk` includes text-delta, reasoning-delta, source,
+        // tool-call, tool-input-start, tool-input-delta, tool-result,
+        // and raw — we only care about raw. Captured in a module-scoped
+        // `rawChunks` array on this invocation's closure.
+        if (chunk.type === "raw") {
+          rawChunks.push({ type: "raw" as const, rawValue: chunk.rawValue })
+        }
+      },
       async onFinish({ response, usage, providerMetadata, finishReason }) {
         // Persist the per-session LLM-transcript event (audit §4).
         // Best-effort: failures are logged, never thrown. The
@@ -577,13 +613,13 @@ const live: Layer.Layer<
         //
         // The AI SDK 5 onFinish shape is `LanguageModelResponseMetadata`
         // (text, toolCalls, finishReason, usage, providerMetadata).
-        // The `response` value is the raw provider response — when
-        // `includeRawChunks` is enabled (currently only the copilot
-        // SDK paths) this is the raw body. For the main providers
-        // we store the structured `messages` + the metadata we have
-        // in scope. A future pass plumbs `includeRawChunks` through
-        // the central provider abstraction (audit §4.4.1 was wrong
-        // about the current state).
+        // The `response` value is the raw provider response. Raw
+        // chunk bodies (one per SSE / transport event) are collected
+        // separately via `onChunk` and written to `raw_chunks` when
+        // `includeRawChunks` is on (the in-tree Copilot SDK synthesizes
+        // them from the wire format; the AI SDK 6 stream wrapper
+        // synthesizes them for every upstream SDK when the top-level
+        // `includeRawChunks: true` flag is set above).
         await TranscriptLog.append({
           ts: Date.now(),
           sessionID: input.sessionID,
@@ -592,12 +628,14 @@ const live: Layer.Layer<
           model: { providerID: input.model.providerID, modelID: input.model.id },
           request: { messages, tools: Object.keys(tools) },
           response,
-          tool_calls: undefined,
+          ...(rawChunks.length > 0 ? { raw_chunks: rawChunks } : {}),
+          tool_calls: extractToolCalls(response),
         })
         // Purge-expired hook: best-effort, runs on every assistant
         // message. 30 days by default; configurable via
-        // `config.log.retentionDays`.
-        const retentionDays = (cfg as { log?: { retentionDays?: number } }).log?.retentionDays ?? 30
+        // `config.log.retentionDays` (the typed `cfg.log` field is now
+        // real — added by the `Config.Log` schema).
+        const retentionDays = cfg.log?.retentionDays ?? 30
         await TranscriptLog.purgeExpired(input.sessionID, retentionDays * 24 * 60 * 60 * 1000)
       },
         async experimental_repairToolCall(failed) {
