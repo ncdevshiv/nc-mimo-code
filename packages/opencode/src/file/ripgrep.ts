@@ -48,6 +48,21 @@ const Begin = z.object({
   }),
 })
 
+export const ContextLine = z.object({
+  type: z.literal("context"),
+  data: z.object({
+    path: z.object({
+      text: z.string(),
+    }),
+    lines: z.object({
+      text: z.string(),
+    }),
+    line_number: z.number(),
+    absolute_offset: z.number(),
+    submatches: z.array(z.unknown()),
+  }),
+}).passthrough()
+
 export const Match = z.object({
   type: z.literal("match"),
   data: z.object({
@@ -69,7 +84,7 @@ export const Match = z.object({
       }),
     ),
   }),
-})
+}).passthrough()
 
 const End = z.object({
   type: z.literal("end"),
@@ -80,7 +95,7 @@ const End = z.object({
     binary_offset: z.number().nullable(),
     stats: Stats,
   }),
-})
+}).passthrough()
 
 const Summary = z.object({
   type: z.literal("summary"),
@@ -92,9 +107,9 @@ const Summary = z.object({
     }),
     stats: Stats,
   }),
-})
+}).passthrough()
 
-const Result = z.union([Begin, Match, End, Summary])
+const Result = z.union([Begin, ContextLine, Match, End, Summary])
 
 export type Result = z.infer<typeof Result>
 export type Match = z.infer<typeof Match>
@@ -104,10 +119,9 @@ export type End = z.infer<typeof End>
 export type Summary = z.infer<typeof Summary>
 export type Row = Match["data"]
 
-export interface SearchResult {
-  items: Item[]
-  partial: boolean
-}
+export type SearchResult =
+  | { items: Item[]; partial: boolean; resultFormat: "content" }
+  | { items: string[]; partial: boolean; resultFormat: "files_with_matches" | "count" }
 
 export interface FilesInput {
   cwd: string
@@ -125,6 +139,19 @@ export interface SearchInput {
   limit?: number
   follow?: boolean
   file?: string[]
+  /**
+   * Number of context lines around each match. Pass a single number
+   * for symmetric context (`-C`), or `{ before, after }` for asymmetric
+   * (`-B` + `-A`). Mirrors ripgrep's `--context` / `--before-context`
+   * / `--after-context` flags. PR-1 step 6.
+   */
+  context?: number | { before: number; after: number }
+  /**
+   * Output format. `content` (default) emits `path:line: text`,
+   * `files_with_matches` emits only paths (ripgrep `--files-with-matches`),
+   * `count` emits a per-file match count (ripgrep `--count`). PR-1 step 6.
+   */
+  resultFormat?: "content" | "files_with_matches" | "count"
   signal?: AbortSignal
 }
 
@@ -211,12 +238,29 @@ function filesArgs(input: FilesInput) {
 }
 
 function searchArgs(input: SearchInput) {
-  const args = ["--no-config", "--json", "--hidden", "--glob=!.git/*", "--no-messages"]
+  // `files_with_matches` and `count` are incompatible with `--json`
+  // (the JSON output carries its own match structure). When the caller
+  // requests either, drop `--json` and let ripgrep emit its native
+  // plain-text output. The caller renders the output itself.
+  const useJson = input.resultFormat === undefined || input.resultFormat === "content"
+  const args = useJson
+    ? ["--no-config", "--json", "--hidden", "--glob=!.git/*", "--no-messages"]
+    : ["--no-config", "--hidden", "--glob=!.git/*", "--no-messages"]
   if (input.follow) args.push("--follow")
   if (input.glob) {
     for (const glob of input.glob) args.push(`--glob=${glob}`)
   }
   if (input.limit) args.push(`--max-count=${input.limit}`)
+  if (input.resultFormat === "files_with_matches") args.push("--files-with-matches")
+  else if (input.resultFormat === "count") args.push("--count")
+  if (input.context !== undefined) {
+    if (typeof input.context === "number") {
+      args.push(`--context=${input.context}`)
+    } else {
+      args.push(`--before-context=${input.context.before}`)
+      args.push(`--after-context=${input.context.after}`)
+    }
+  }
   args.push("--", input.pattern, ...(input.file ?? ["."]))
   return args
 }
@@ -382,21 +426,43 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | ChildPro
       const search: Interface["search"] = Effect.fn("Ripgrep.search")(function* (input: SearchInput) {
         yield* check(input.cwd)
 
+        const useJson = input.resultFormat === undefined || input.resultFormat === "content"
         const program = Effect.scoped(
           Effect.gen(function* () {
             const handle = yield* spawner.spawn(yield* command(input.cwd, searchArgs(input)))
 
             const [items, stderr, code] = yield* Effect.all(
               [
-                Stream.decodeText(handle.stdout).pipe(
-                  Stream.splitLines,
-                  Stream.filter((line) => line.length > 0),
-                  Stream.mapEffect(parse),
-                  Stream.filter((item): item is Match => item.type === "match"),
-                  Stream.map((item) => row(item.data)),
-                  Stream.runCollect,
-                  Effect.map((chunk) => [...chunk]),
-                ),
+                useJson
+                  ? Stream.decodeText(handle.stdout).pipe(
+                      Stream.splitLines,
+                      Stream.filter((line) => line.length > 0),
+                      Stream.mapEffect(parse),
+                      // Emit a synthetic "match" for `context` events so
+                      // the existing render path can show context lines
+                      // alongside the match line. The downstream filter
+                      // (in grep.ts) only cares that the items are
+                      // match-shaped.
+                      Stream.filter((item): item is Match | { type: "context"; data: Match["data"] } =>
+                        item.type === "match" || item.type === "context",
+                      ),
+                      Stream.map((item): Match => {
+                        if (item.type === "match") return item
+                        return {
+                          type: "match",
+                          data: {
+                            ...item.data,
+                            submatches: [],
+                          },
+                        } as Match
+                      }),
+                      Stream.map((item) => row(item.data)),
+                      Stream.runCollect,
+                      Effect.map((chunk) => [...chunk]),
+                    )
+                  : Stream.mkString(Stream.decodeText(handle.stdout)).pipe(
+                      Effect.map((text) => text.split("\n").filter((line) => line.length > 0)),
+                    ),
                 Stream.mkString(Stream.decodeText(handle.stderr)),
                 handle.exitCode,
               ],
@@ -407,9 +473,17 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | ChildPro
               return yield* Effect.fail(error(stderr, code))
             }
 
+            if (useJson) {
+              return {
+                items: code === 1 ? [] : (items as Item[]),
+                partial: code === 2,
+                resultFormat: "content" as const,
+              }
+            }
             return {
-              items: code === 1 ? [] : items,
+              items: code === 1 ? [] : (items as string[]),
               partial: code === 2,
+              resultFormat: input.resultFormat as "files_with_matches" | "count",
             }
           }),
         )

@@ -28,6 +28,11 @@ export namespace AppFileSystem {
     readonly writeJson: (path: string, data: unknown, mode?: number) => Effect.Effect<void, Error>
     readonly ensureDir: (path: string) => Effect.Effect<void, Error>
     readonly writeWithDirs: (path: string, content: string | Uint8Array, mode?: number) => Effect.Effect<void, Error>
+    readonly writeAtomicWithDirs: (
+      path: string,
+      content: string | Uint8Array,
+      mode?: number,
+    ) => Effect.Effect<void, Error>
     readonly readDirectoryEntries: (path: string) => Effect.Effect<DirEntry[], Error>
     readonly findUp: (target: string, start: string, stop?: string) => Effect.Effect<string[], Error>
     readonly up: (options: { targets: string[]; start: string; stop?: string }) => Effect.Effect<string[], Error>
@@ -107,6 +112,52 @@ export namespace AppFileSystem {
         if (mode) yield* fs.chmod(path, mode)
       })
 
+      // Atomic write — PR for write/multiedit tool hardening. Writes
+      // to a temp file in the same directory then `fs.rename`s over
+      // the destination. On any error mid-write the temp file is
+      // unlinked and the destination is left untouched, so a crash
+      // mid-`write` can never leave a half-written file. Mode is
+      // applied after the rename so the chmod only takes effect on
+      // the final atomically-replaced file.
+      const writeAtomicWithDirs = Effect.fn("FileSystem.writeAtomicWithDirs")(function* (
+        path: string,
+        content: string | Uint8Array,
+        mode?: number,
+      ) {
+        const tempPath = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`
+        const write =
+          typeof content === "string" ? fs.writeFileString(tempPath, content) : fs.writeFile(tempPath, content)
+
+        yield* write
+          .pipe(
+            Effect.catchIf(
+              (e) => e.reason._tag === "NotFound",
+              () =>
+                Effect.gen(function* () {
+                  yield* fs.makeDirectory(dirname(path), { recursive: true })
+                  yield* write
+                }),
+            ),
+          )
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.gen(function* () {
+                yield* fs.remove(tempPath).pipe(Effect.ignore)
+                return yield* Effect.fail(cause)
+              }),
+            ),
+          )
+        yield* fs.rename(tempPath, path).pipe(
+          Effect.catch((cause) =>
+            Effect.gen(function* () {
+              yield* fs.remove(tempPath).pipe(Effect.ignore)
+              return yield* Effect.fail(cause)
+            }),
+          ),
+        )
+        if (mode) yield* fs.chmod(path, mode)
+      })
+
       const glob = Effect.fn("FileSystem.glob")(function* (pattern: string, options?: Glob.Options) {
         return yield* Effect.tryPromise({
           try: () => Glob.scan(pattern, options),
@@ -170,6 +221,7 @@ export namespace AppFileSystem {
         writeJson,
         ensureDir,
         writeWithDirs,
+        writeAtomicWithDirs,
         findUp,
         up,
         globUp,

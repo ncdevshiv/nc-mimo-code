@@ -1,28 +1,9 @@
 import { Effect } from "effect"
 import { eq, Database } from "../storage"
 import { MessageTable, SessionTable } from "../session/session.sql"
+import { LRU } from "@/util/lru"
 import type { MessageID } from "../session/schema"
 import type { SessionID } from "../session/schema"
-
-class LRU<K, V> {
-  private map = new Map<K, V>()
-  constructor(private readonly max: number) {}
-  get(k: K): V | undefined {
-    const v = this.map.get(k)
-    if (v === undefined) return undefined
-    this.map.delete(k)
-    this.map.set(k, v)
-    return v
-  }
-  set(k: K, v: V) {
-    if (this.map.has(k)) this.map.delete(k)
-    this.map.set(k, v)
-    if (this.map.size > this.max) {
-      const oldest = this.map.keys().next().value
-      if (oldest !== undefined) this.map.delete(oldest)
-    }
-  }
-}
 
 export type Resolver = {
   role: (messageID: string) => Effect.Effect<"user" | "assistant">
