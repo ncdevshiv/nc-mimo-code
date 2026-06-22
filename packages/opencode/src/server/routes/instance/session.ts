@@ -30,6 +30,7 @@ import { lazy } from "@/util/lazy"
 import { Bus } from "@/bus"
 import { NamedError } from "@nc-mimo-code/shared/util/error"
 import { jsonRequest, runRequest } from "./trace"
+import { TranscriptLog } from "@/monitor/llm-transcript"
 
 const log = Log.create({ service: "server" })
 
@@ -851,6 +852,54 @@ export const SessionRoutes = lazy(() =>
           })
           return true
         }),
+    )
+    // PR-2 step 6 — `GET /session/:sessionID/llm-log` reads the
+    // per-session JSONL transcript log (audit §4) and returns the
+    // parsed events as JSON. Supports `?tool=<name>` and `?last=<n>`
+    // query filters, mirroring the `nc-mimo-code llm-log` CLI
+    // subcommand's options. The TUI "View LLM transcript log"
+    // dialog (`cli/cmd/tui/component/dialog-llm-log.tsx`) calls
+    // this via `sdk.client.session.llmLog(...)`.
+    .get(
+      "/:sessionID/llm-log",
+      describeRoute({
+        summary: "Get session LLM-transcript log",
+        description:
+          "Read the per-session LLM-transcript events (one JSON line per assistant message). The log is opt-in (requires `config.log.enabled = true`). Each event captures the model, the request body, the response, and the tool calls. Use `?tool=<name>` to filter to events that included a call to a specific tool, and `?last=<n>` to limit to the most recent N events.",
+        operationId: "session.llmLog",
+        responses: {
+          200: {
+            description: "List of transcript events (oldest first unless `?last=` is used)",
+            content: {
+              "application/json": {
+                schema: resolver(z.array(z.unknown())),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: SessionID.zod })),
+      validator(
+        "query",
+        z.object({
+          tool: z.string().optional().meta({ description: "Filter to events whose `tool_calls` includes this tool name." }),
+          last: z.coerce
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .meta({ description: "Only return the most recent N events (applied after the `tool` filter)." }),
+        }),
+      ),
+      async (c) => {
+        const { sessionID } = c.req.valid("param")
+        const { tool, last } = c.req.valid("query")
+        const events = await TranscriptLog.read(sessionID)
+        const filtered = tool ? events.filter((e) => e.tool_calls?.some((tc) => tc.toolName === tool)) : events
+        const sliced = last !== undefined ? filtered.slice(-last) : filtered
+        return c.json(sliced)
+      },
     )
     .delete(
       "/:sessionID/message/:messageID/part/:partID",
