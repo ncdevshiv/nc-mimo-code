@@ -26,6 +26,37 @@ import { isRecord } from "@/util/record"
 const DOOM_LOOP_THRESHOLD = 3
 const log = Log.create({ service: "session.processor" })
 
+// Inline-think-tag parsing for custom OpenAI-compatible providers that emit
+// reasoning as  think ...  think  in the regular content stream (Qwen, GLM,
+// Kimi, DeepSeek variants served through a custom gateway like tokenrouter,
+// etc.) instead of as a separate reasoning_content field. The AI SDK only
+// recognises the latter; without this parser, the raw tags leak into the
+// visible TextPart. The parser maintains a small tail buffer that may hold
+// a partial tag across chunk boundaries, and emits reasoning-start /
+// reasoning-delta / reasoning-end to the existing ReasoningPart path.
+const LT = String.fromCharCode(60) // "<"
+const GT = String.fromCharCode(62) // ">"
+const THINK_OPEN_TAG = LT + "think" + GT
+const THINK_CLOSE_TAG = LT + "/think" + GT
+
+/**
+ * Longest suffix of `buffer` (up to `tag.length - 1` chars) that is also a
+ * prefix of `tag`. Used to hold back a possibly-partial tag opener/closer
+ * across chunk boundaries. Returns 0 if no suffix matches (so the caller can
+ * safely flush the entire buffer).
+ *
+ * Exported for unit testing — see
+ * `test/_standalone/think-tag-parser.test.ts`.
+ */
+export function thinkHoldLen(buffer: string, open: boolean): number {
+  const tag = open ? THINK_OPEN_TAG : THINK_CLOSE_TAG
+  const max = Math.min(buffer.length, tag.length - 1)
+  for (let len = max; len >= 1; len--) {
+    if (tag.startsWith(buffer.slice(-len))) return len
+  }
+  return 0
+}
+
 export type Result = "overflow" | "stop" | "continue"
 
 export type Event = LLM.Event
@@ -144,6 +175,15 @@ interface ProcessorContext extends Input {
   stepStartedAt: number | undefined
   firstTokenAt: number | undefined
   stepPartIds: PartID[]
+  // Inline-think-tag parser state. thinkBuffer holds the uncommitted tail of
+  // text that may still be a partial open or close tag; thinkActive flips
+  // true after `think` is consumed and back to false after `/think`.
+  // thinkReasoningPart is the ReasoningPart we materialised for inline
+  // think-tag content (parallel to reasoningMap, which is for SDK-native
+  // reasoning events).
+  thinkBuffer: string
+  thinkActive: boolean
+  thinkReasoningPart: MessageV2.ReasoningPart | undefined
 }
 
 type StreamEvent = Event
@@ -198,6 +238,9 @@ export const layer: Layer.Layer<
         stepStartedAt: undefined,
         firstTokenAt: undefined,
         stepPartIds: [],
+        thinkBuffer: "",
+        thinkActive: false,
+        thinkReasoningPart: undefined,
       }
       let aborted = false
       // Only the main agent owns session-level status. Subagents (explore,
@@ -213,6 +256,142 @@ export const layer: Layer.Layer<
           providerID: input.model.providerID,
           aborted,
         })
+
+      // Append a visible-text segment to the current TextPart and persist it.
+      // The SDK's own reasoning events update ctx.reasoningMap; this helper
+      // updates ctx.currentText for the inline-think-tag parser.
+      const appendVisibleText = Effect.fn("SessionProcessor.appendVisibleText")(function* (text: string) {
+        if (!ctx.currentText || text.length === 0) return
+        ctx.currentText.text += text
+        yield* session.updatePartDelta({
+          sessionID: ctx.currentText.sessionID,
+          messageID: ctx.currentText.messageID,
+          partID: ctx.currentText.id,
+          field: "text",
+          delta: text,
+        })
+      })
+
+      // Append a reasoning segment to the inline-tag ReasoningPart. Creates
+      // the part on first call (mirrors reasoning-start), and is a no-op if
+      // currentText is missing (text-start hadn't fired yet, so we have
+      // nowhere to attach a reasoning part either).
+      const openInlineReasoning = Effect.fn("SessionProcessor.openInlineReasoning")(
+        function* (providerMetadata: Record<string, any> | undefined) {
+          if (ctx.thinkReasoningPart) return
+          if (!ctx.assistantMessage) return
+          const partID = PartID.ascending()
+          ctx.thinkReasoningPart = {
+            id: partID,
+            messageID: ctx.assistantMessage.id,
+            sessionID: ctx.assistantMessage.sessionID,
+            type: "reasoning",
+            text: "",
+            time: { start: Date.now() },
+            metadata: providerMetadata,
+          }
+          yield* session.updatePart(ctx.thinkReasoningPart)
+          ctx.stepPartIds.push(partID)
+        },
+      )
+
+      const appendInlineReasoning = Effect.fn("SessionProcessor.appendInlineReasoning")(
+        function* (text: string) {
+          if (!ctx.thinkReasoningPart || text.length === 0) return
+          ctx.thinkReasoningPart.text += text
+          yield* session.updatePartDelta({
+            sessionID: ctx.thinkReasoningPart.sessionID,
+            messageID: ctx.thinkReasoningPart.messageID,
+            partID: ctx.thinkReasoningPart.id,
+            field: "text",
+            delta: text,
+          })
+        },
+      )
+
+      const closeInlineReasoning = Effect.fn("SessionProcessor.closeInlineReasoning")(function* () {
+        if (!ctx.thinkReasoningPart) return
+        const end = Date.now()
+        ctx.thinkReasoningPart.time = { ...ctx.thinkReasoningPart.time, end }
+        yield* session.updatePart(ctx.thinkReasoningPart)
+        ctx.thinkReasoningPart = undefined
+      })
+
+      // Drain ctx.thinkBuffer into the current visible-text or reasoning
+      // stream based on ctx.thinkActive, then close any open reasoning. Used
+      // at text-end and cleanup when the stream terminates mid-tag.
+      const flushThinkTail = Effect.fn("SessionProcessor.flushThinkTail")(function* () {
+        if (ctx.thinkBuffer.length === 0 && !ctx.thinkActive) return
+        if (ctx.thinkBuffer.length > 0) {
+          if (ctx.thinkActive) {
+            yield* appendInlineReasoning(ctx.thinkBuffer)
+          } else {
+            yield* appendVisibleText(ctx.thinkBuffer)
+          }
+          ctx.thinkBuffer = ""
+        }
+        if (ctx.thinkActive) {
+          yield* closeInlineReasoning()
+          ctx.thinkActive = false
+        }
+      })
+
+      // Process one streamed text-delta through the inline-think-tag parser.
+      // Splits the delta into visible-text and reasoning segments (the latter
+      // materialised as a ReasoningPart via the helpers above), holds any
+      // trailing suffix that may still be a partial tag, and loops until the
+      // buffer cannot make further progress.
+      const processThinkDelta = Effect.fn("SessionProcessor.processThinkDelta")(
+        function* (delta: string, providerMetadata: Record<string, any> | undefined) {
+          if (delta.length === 0) return
+          ctx.thinkBuffer += delta
+          let progress = true
+          while (progress) {
+            progress = false
+            if (ctx.thinkActive) {
+              const idx = ctx.thinkBuffer.indexOf(THINK_CLOSE_TAG)
+              if (idx >= 0) {
+                if (idx > 0) yield* appendInlineReasoning(ctx.thinkBuffer.slice(0, idx))
+                ctx.thinkBuffer = ctx.thinkBuffer.slice(idx + THINK_CLOSE_TAG.length)
+                yield* closeInlineReasoning()
+                ctx.thinkActive = false
+                progress = true
+                continue
+              }
+              const hold = thinkHoldLen(ctx.thinkBuffer, false)
+              if (hold > 0 && ctx.thinkBuffer.length > hold) {
+                yield* appendInlineReasoning(ctx.thinkBuffer.slice(0, ctx.thinkBuffer.length - hold))
+                ctx.thinkBuffer = ctx.thinkBuffer.slice(-hold)
+                progress = true
+              } else if (hold === 0 && ctx.thinkBuffer.length > 0) {
+                yield* appendInlineReasoning(ctx.thinkBuffer)
+                ctx.thinkBuffer = ""
+                progress = true
+              }
+            } else {
+              const idx = ctx.thinkBuffer.indexOf(THINK_OPEN_TAG)
+              if (idx >= 0) {
+                if (idx > 0) yield* appendVisibleText(ctx.thinkBuffer.slice(0, idx))
+                ctx.thinkBuffer = ctx.thinkBuffer.slice(idx + THINK_OPEN_TAG.length)
+                yield* openInlineReasoning(providerMetadata)
+                ctx.thinkActive = true
+                progress = true
+                continue
+              }
+              const hold = thinkHoldLen(ctx.thinkBuffer, true)
+              if (hold > 0 && ctx.thinkBuffer.length > hold) {
+                yield* appendVisibleText(ctx.thinkBuffer.slice(0, ctx.thinkBuffer.length - hold))
+                ctx.thinkBuffer = ctx.thinkBuffer.slice(-hold)
+                progress = true
+              } else if (hold === 0 && ctx.thinkBuffer.length > 0) {
+                yield* appendVisibleText(ctx.thinkBuffer)
+                ctx.thinkBuffer = ""
+                progress = true
+              }
+            }
+          }
+        },
+      )
 
       const settleToolCall = Effect.fn("SessionProcessor.settleToolCall")(function* (toolCallID: string) {
         const done = ctx.toolcalls[toolCallID]?.done
@@ -548,19 +727,18 @@ export const layer: Layer.Layer<
           case "text-delta":
             if (!ctx.firstTokenAt) ctx.firstTokenAt = Date.now()
             if (!ctx.currentText) return
-            ctx.currentText.text += value.text
             if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
-            yield* session.updatePartDelta({
-              sessionID: ctx.currentText.sessionID,
-              messageID: ctx.currentText.messageID,
-              partID: ctx.currentText.id,
-              field: "text",
-              delta: value.text,
-            })
+            // Route the streamed text through the inline think-tag parser so
+            // models that emit reasoning as  think ...  think  in the content
+            // stream (Qwen, GLM, Kimi, DeepSeek variants served through a
+            // custom OpenAI-compatible gateway) get a proper ReasoningPart
+            // instead of leaking the raw tags into the visible TextPart.
+            yield* processThinkDelta(value.text, value.providerMetadata)
             return
 
           case "text-end":
             if (!ctx.currentText) return
+            yield* flushThinkTail()
             // oxlint-disable-next-line no-self-assign -- reactivity trigger
             ctx.currentText.text = ctx.currentText.text
             ctx.currentText.text = (yield* plugin.trigger(
@@ -607,6 +785,10 @@ export const layer: Layer.Layer<
         }
 
         if (ctx.currentText) {
+          // Drain any pending think-tag buffer (visible-text or open-reasoning)
+          // before finalising the part, otherwise the last partial chunk would
+          // be lost on stream cancellation / interrupt.
+          yield* flushThinkTail()
           const end = Date.now()
           ctx.currentText.time = { start: ctx.currentText.time?.start ?? end, end }
           yield* session.updatePart(ctx.currentText)
