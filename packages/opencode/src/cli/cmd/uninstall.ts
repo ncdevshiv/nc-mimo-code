@@ -4,11 +4,43 @@ import * as prompts from "@clack/prompts"
 import { AppRuntime } from "@/effect/app-runtime"
 import { Installation } from "../../installation"
 import { Global } from "../../global"
+import { Config } from "../../config"
 import fs from "fs/promises"
 import path from "path"
 import os from "os"
 import { Filesystem } from "../../util"
 import { Process } from "../../util"
+
+// PR-4 (audit §9): the install methods this npm-published build
+// supports out of the box. brew/choco/scoop are listed in the
+// `ConfigInstallation.Info.channels` schema but not in the default
+// — they are flipped on at publish time. The uninstall command
+// treats any method not in the resolved channel list as "skip":
+// the summary hides the Package: line, the executor warns and
+// moves on. This is the "no commented-out replacement code"
+// behavior prescribed by mpr.md §6/§12.
+const DEFAULT_CHANNELS: Installation.Method[] = ["npm", "pnpm", "bun"]
+
+// Full map of install method -> argv for the package-manager
+// uninstall command. Filtered at runtime by the user's
+// `installation.channels` config — the data lives here as a flat
+// record (not as commented-out code) so the config is the single
+// source of truth for *which* channels to expose, and this map is
+// the single source of truth for *what command* each channel runs.
+const PACKAGE_MANAGER_UNINSTALL_CMDS: Record<Installation.Method, string[]> = {
+  npm: ["npm", "uninstall", "-g", "@nc-mimo-code/cli"],
+  pnpm: ["pnpm", "uninstall", "-g", "@nc-mimo-code/cli"],
+  bun: ["bun", "remove", "-g", "@nc-mimo-code/cli"],
+  brew: ["brew", "uninstall", "@nc-mimo-code/cli"],
+  choco: ["choco", "uninstall", "-y", "@nc-mimo-code/cli"],
+  scoop: ["scoop", "uninstall", "@nc-mimo-code/cli"],
+  // curl and unknown are runtime-detected states, not publishable
+  // channels. They never appear in `installation.channels` and so
+  // never reach `buildPackageManagerCommandArrays`. Stub entries
+  // keep the record's type honest; both branches are unreachable.
+  curl: [],
+  unknown: [],
+}
 
 interface UninstallArgs {
   keepConfig: boolean
@@ -59,11 +91,13 @@ export const UninstallCommand = {
     prompts.intro("Uninstall NcMimoCode")
 
     const method = await AppRuntime.runPromise(Installation.Service.use((svc) => svc.method()))
+    const config = await AppRuntime.runPromise(Config.Service.use((cfg) => cfg.get()))
+    const channels = resolveChannels(config.installation?.channels)
     prompts.log.info(`Installation method: ${method}`)
 
     const targets = await collectRemovalTargets(args, method)
 
-    await showRemovalSummary(targets, method)
+    await showRemovalSummary(targets, method, channels)
 
     if (!args.force && !args.dryRun) {
       const confirm = await prompts.confirm({
@@ -82,7 +116,7 @@ export const UninstallCommand = {
       return
     }
 
-    await executeUninstall(method, targets)
+    await executeUninstall(method, targets, channels)
 
     prompts.outro("Done")
   },
@@ -102,7 +136,11 @@ async function collectRemovalTargets(args: UninstallArgs, method: Installation.M
   return { directories, shellConfig, binary }
 }
 
-async function showRemovalSummary(targets: RemovalTargets, method: Installation.Method) {
+async function showRemovalSummary(
+  targets: RemovalTargets,
+  method: Installation.Method,
+  channels: ReadonlyArray<Installation.Method>,
+) {
   prompts.log.message("The following will be removed:")
 
   for (const dir of targets.directories) {
@@ -130,36 +168,65 @@ async function showRemovalSummary(targets: RemovalTargets, method: Installation.
 
   if (method !== "curl" && method !== "unknown") {
     // The list of package-manager channels this build is published
-    // to. npm/pnpm/bun are always available; brew/choco/scoop are
-    // gated on a release to those channels. The `cmds` map is built
-    // dynamically by `buildPackageManagerCommandArrays` so the
-    // uninstall summary reflects exactly what `install` would have
-    // used — no commented-out stubs, no placeholders. When a new
-    // channel is published, the `Method` union + this function are
-    // updated together.
-    const cmds: Record<string, string> = {}
-    for (const [name, cmd] of Object.entries(buildPackageManagerCommandArrays())) {
-      cmds[name] = cmd.join(" ")
+    // to comes from the user's `installation.channels` config (with
+    // the npm-published default applied by `resolveChannels` when
+    // the field is absent). The `cmds` map is built dynamically
+    // by `buildPackageManagerCommandArrays` so the uninstall
+    // summary reflects exactly what `install` would have used —
+    // no commented-out stubs, no placeholders. When a new channel
+    // is published, flip on the `Method` in `installation.channels`
+    // (or set the default in `DEFAULT_CHANNELS` at publish time).
+    const cmds = buildPackageManagerCommandArrays(channels)
+    const cmd = cmds[method]
+    if (cmd) {
+      prompts.log.info(`  ✓ Package: ${cmd.join(" ")}`)
+    } else {
+      prompts.log.info(`  ○ Package: ${method} (not in installation.channels, skipping)`)
     }
-    prompts.log.info(`  ✓ Package: ${cmds[method] || method}`)
   }
 }
 
 /**
- * Build the package-manager -> uninstall-command array map. Same
- * shape as `buildPackageManagerCommands` but with the command split
- * into argv for `Process.run` (which doesn't go through a shell).
+ * Resolve the effective channel list. Falls back to
+ * `DEFAULT_CHANNELS` when the user has not configured
+ * `installation.channels` (the npm-published build) or has set it
+ * to an empty array (the user explicitly opted out of all package
+ * managers — e.g. they want the binary-rm path that `curl` would
+ * use).
+ *
+ * Exported for tests (PR-4 audit §9.6 "config-driven tests").
  */
-function buildPackageManagerCommandArrays(): Record<string, string[]> {
-  const cmds: Record<string, string[]> = {
-    npm: ["npm", "uninstall", "-g", "@nc-mimo-code/cli"],
-    pnpm: ["pnpm", "uninstall", "-g", "@nc-mimo-code/cli"],
-    bun: ["bun", "remove", "-g", "@nc-mimo-code/cli"],
+export function resolveChannels(
+  configured: ReadonlyArray<Installation.Method> | undefined,
+): Installation.Method[] {
+  if (!configured || configured.length === 0) return [...DEFAULT_CHANNELS]
+  return [...configured]
+}
+
+/**
+ * Build the package-manager -> uninstall-command array map, filtered
+ * to the channels the user (or the publish-time default) has enabled.
+ * Channels not in the resolved list are absent from the result; the
+ * summary + executor then both treat "absent" as "skip".
+ *
+ * Exported for tests (PR-4 audit §9.6 "config-driven tests").
+ */
+export function buildPackageManagerCommandArrays(
+  channels: ReadonlyArray<Installation.Method>,
+): Record<string, string[]> {
+  const cmds: Record<string, string[]> = {}
+  for (const channel of channels) {
+    const cmd = PACKAGE_MANAGER_UNINSTALL_CMDS[channel]
+    if (cmd && cmd.length > 0) cmds[channel] = cmd
   }
   return cmds
 }
 
-async function executeUninstall(method: Installation.Method, targets: RemovalTargets) {
+async function executeUninstall(
+  method: Installation.Method,
+  targets: RemovalTargets,
+  channels: ReadonlyArray<Installation.Method>,
+) {
   const spinner = prompts.spinner()
   const errors: string[] = []
 
@@ -197,7 +264,7 @@ async function executeUninstall(method: Installation.Method, targets: RemovalTar
   }
 
   if (method !== "curl" && method !== "unknown") {
-    const cmds: Record<string, string[]> = buildPackageManagerCommandArrays()
+    const cmds = buildPackageManagerCommandArrays(channels)
     const cmd = cmds[method]
     if (cmd) {
       spinner.start(`Running ${cmd.join(" ")}...`)
@@ -211,7 +278,7 @@ async function executeUninstall(method: Installation.Method, targets: RemovalTar
         spinner.stop("Package removed")
       }
     } else {
-      prompts.log.warn(`Uninstall not supported for method "${method}" yet, skipping package removal`)
+      prompts.log.warn(`Uninstall not supported for method "${method}" (not in installation.channels), skipping package removal`)
     }
   }
 

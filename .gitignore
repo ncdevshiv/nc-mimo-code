@@ -37,7 +37,23 @@ tsconfig.tsbuildinfo
 .mimo-worktrees
 .nc-mimo-code/
 
+# opencode runtime config dir (created when opencode runs against
+# the cwd; contains agent/plugin/glossary/theme definitions the
+# user installs). It's session state, not source — the same
+# convention as `.mimo-worktrees` above. Add to gitignore so
+# `git status` stays clean; the dir is recreated on next run.
+.mimocode/
+
 # experiment run artifacts (regenerated per run, not source)
 experiment/*.log
 experiment/last-outcome.json
 /experiment
+
+# Windows device-name accidents: PowerShell's `> nul` (the
+# equivalent of `> /dev/null` on Unix) creates a literal `nul`
+# file when the shell happens to be Cygwin/MSYS or when the
+# redirect is interpreted relative to a CWD the shell doesn't
+# expect. We don't ship these; they pollute `git status`.
+/nul
+/nul
+**/nul
