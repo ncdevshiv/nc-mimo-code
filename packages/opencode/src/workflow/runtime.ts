@@ -136,6 +136,10 @@ export interface Interface {
   readonly wait: (input: { runID: string; timeoutMs?: number }) => Effect.Effect<RunOutcome>
   readonly cancel: (input: { runID: string }) => Effect.Effect<void>
   readonly list: (input?: { sessionID?: SessionID }) => Effect.Effect<RunSummary[]>
+  // Audit §10: read a run's journal file (one JSON event per
+  // line, in append order). Used by the workflow tool's `logs`
+  // operation to give the LLM a run's timeline.
+  readonly logs: (input: { runID: string; limit?: number }) => Effect.Effect<Array<unknown>>
   readonly resume: (input: { runID: string; agentTimeoutMs?: number }) => Effect.Effect<{ runID: string; resumed: boolean }>
 }
 
@@ -1134,6 +1138,20 @@ export const layer = Layer.effect(
       return yield* WorkflowPersistence.list(input)
     })
 
+    // Audit §10: read a run's journal events. `limit` slices the
+    // tail of the timeline (newest events first) — useful when
+    // the LLM only wants the most recent failure or status
+    // change. The safeRunID check inside `journalPath` throws on
+    // a malformed ID before the filesystem is touched.
+    const logs = Effect.fn("WorkflowRuntime.logs")(function* (input: { runID: string; limit?: number }) {
+      const events = yield* WorkflowPersistence.readJournal(input.runID)
+      const limit = input.limit ?? events.length
+      // Return the tail of the timeline (most recent first) so
+      // the LLM gets the "what just happened?" view it usually
+      // wants. Empty array if the journal is missing.
+      return events.slice(-limit).reverse()
+    })
+
     // Re-launch a persisted run under the SAME runID via the shared launch path.
     // recordStart's onConflictDoUpdate flips the existing row back to "running" and
     // runs.set overwrites the stale terminal entry (its old fiber is already done).
@@ -1209,7 +1227,7 @@ export const layer = Layer.effect(
       }).pipe(Effect.ensuring(Effect.sync(() => lock[Symbol.dispose]())))
     })
 
-    const impl = Service.of({ start, status, wait, cancel, list, resume })
+    const impl = Service.of({ start, status, wait, cancel, list, logs, resume })
     // Late-bind the impl so the `workflow` tool can resolve it without forcing a
     // WorkflowRuntime.Service requirement onto ToolRegistry.layer. See
     // runtime-ref.ts for rationale.

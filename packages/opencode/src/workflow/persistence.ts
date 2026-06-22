@@ -281,6 +281,31 @@ const loadJournal = (runID: string): Effect.Effect<JournalLoad> =>
     return { results, pass: maxPass + 1 }
   })
 
+// Audit §10 (tool-audit.md "Skill/LSP/Workflow tools"): the
+// workflow tool has no `logs` operation. The journal file at
+// `scriptDir/<runID>.jsonl` already records every event the
+// runtime appends (agents, logs, status transitions, errors).
+// This function reads the file and returns the parsed events
+// (one per line, in append order) so the LLM can introspect a
+// run's timeline. Torn/partial lines are skipped (same
+// robustness as `loadJournal`).
+const readJournal = (runID: string): Effect.Effect<JournalEvent[]> =>
+  Effect.promise(async () => {
+    const file = Bun.file(journalPath(runID))
+    if (!(await file.exists())) return []
+    const text = await file.text()
+    const events: JournalEvent[] = []
+    for (const line of text.split("\n")) {
+      if (!line) continue
+      try {
+        events.push(JSON.parse(line) as JournalEvent)
+      } catch {
+        continue
+      }
+    }
+    return events
+  })
+
 // Truncate the journal to empty (MR104 P1-2). Called on the resume sha-mismatch
 // path BEFORE the fresh relaunch appends: replaying the OLD journal onto an EDITED
 // script is silent divergence, so the stale lines must not survive — and a fresh
@@ -308,5 +333,6 @@ export const WorkflowPersistence = {
   appendJournal,
   appendJournalSync,
   loadJournal,
+  readJournal,
   clearJournal,
 }

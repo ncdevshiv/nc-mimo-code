@@ -41,6 +41,23 @@ const waitSchema = z.strictObject({
 })
 const cancelSchema = z.strictObject({ operation: z.literal("cancel"), run_id: z.string().min(1) })
 const resumeSchema = z.strictObject({ operation: z.literal("resume"), run_id: z.string().min(1) })
+// Audit §10: list existing runs (or filter by session). The
+// session_id is the same as the actor tool's — workflow runs
+// are scoped to the session that started them, and the LLM
+// usually wants "what workflows have I started in this
+// session?" rather than the global view.
+const listSchema = z.strictObject({
+  operation: z.literal("list"),
+  session_id: z.string().min(1).optional().describe("Filter to runs in this session. Defaults to current session."),
+  include_terminal: z.boolean().optional().describe("Include completed/failed/cancelled runs. Default false."),
+})
+// Audit §10: read a run's journal (timeline of events). `limit`
+// is the tail count; defaults to the full journal.
+const logsSchema = z.strictObject({
+  operation: z.literal("logs"),
+  run_id: z.string().min(1).describe("Run id (e.g. wf_abc123)."),
+  limit: z.number().int().positive().optional().describe("Tail count to return. Default: all events. Newest first."),
+})
 
 export const parameters = z.discriminatedUnion("operation", [
   runSchema,
@@ -48,6 +65,8 @@ export const parameters = z.discriminatedUnion("operation", [
   waitSchema,
   cancelSchema,
   resumeSchema,
+  listSchema,
+  logsSchema,
 ])
 
 type Metadata = { runID?: string; status?: string }
@@ -151,6 +170,45 @@ export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Serv
           metadata: { runID: input.run_id } satisfies Metadata,
         }
       }
+      if (input.operation === "list") {
+        // Audit §10: list runs. `include_terminal` defaults to
+        // false (active runs only) — the LLM usually wants "what
+        // is running now?" not "all of history".
+        const all = yield* runtime.list({ sessionID: ctx.sessionID })
+        const includeTerminal = input.include_terminal ?? false
+        const filtered = includeTerminal ? all : all.filter((r) => r.status === "running")
+        if (filtered.length === 0) {
+          return {
+            title: "workflow list: 0 runs",
+            output: includeTerminal ? "No workflow runs." : "No active workflow runs.",
+            metadata: { count: 0 },
+          }
+        }
+        const lines = filtered.map((r) => {
+          return `${r.runID} ${r.status} — ${r.name} (r:${r.running} s:${r.succeeded} f:${r.failed}${r.currentPhase ? `, phase=${r.currentPhase}` : ""})`
+        })
+        return {
+          title: `workflow list: ${filtered.length} run${filtered.length === 1 ? "" : "s"}`,
+          output: lines.join("\n"),
+          metadata: { count: filtered.length },
+        }
+      }
+      if (input.operation === "logs") {
+        // Audit §10: read a run's journal. Newest-first tail.
+        const events = yield* runtime.logs({ runID: input.run_id, limit: input.limit })
+        if (events.length === 0) {
+          return {
+            title: `workflow logs: ${input.run_id}`,
+            output: `No events recorded for ${input.run_id} (run may not exist, or has no journal).`,
+            metadata: { runID: input.run_id, count: 0 },
+          }
+        }
+        return {
+          title: `workflow logs: ${input.run_id} (${events.length} event${events.length === 1 ? "" : "s"})`,
+          output: events.map((e) => JSON.stringify(e)).join("\n"),
+          metadata: { runID: input.run_id, count: events.length },
+        }
+      }
       input satisfies never
       throw new Error(`unhandled workflow operation: ${(input as { operation: string }).operation}`)
     })
@@ -158,7 +216,15 @@ export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Serv
     return {
       description: DESCRIPTION,
       parameters,
-      formatValidationError: Tool.formatDiscriminatedUnionError(["run", "status", "wait", "cancel", "resume"]),
+      formatValidationError: Tool.formatDiscriminatedUnionError([
+        "run",
+        "status",
+        "wait",
+        "cancel",
+        "resume",
+        "list",
+        "logs",
+      ]),
       execute: (input: z.infer<typeof parameters>, ctx: Tool.Context<Metadata>) => run(input, ctx).pipe(Effect.orDie),
     } satisfies Tool.DefWithoutID<typeof parameters, Metadata>
   }),
