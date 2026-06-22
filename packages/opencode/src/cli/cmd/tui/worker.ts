@@ -11,6 +11,8 @@ import { Flag } from "@/flag/flag"
 import { writeHeapSnapshot } from "node:v8"
 import { Heap } from "@/cli/heap"
 import { AppRuntime } from "@/effect/app-runtime"
+import { wireAppTranscriptLog } from "@/effect/wire-app-transcript-log"
+import { wireAppMonitor } from "@/effect/app-runtime"
 import { ensureProcessMetadata } from "@/util/mimo-process"
 
 ensureProcessMetadata("worker")
@@ -79,6 +81,25 @@ export const rpc = {
       directory: input.directory,
       init: () => AppRuntime.runPromise(InstanceBootstrap),
       fn: async () => {
+        // PR-2 step 5 — wire the LLM-transcript log flags
+        // (enabled / includeRawChunks / redactKeys / path) into the
+        // module-scoped setters inside `monitor/llm-transcript.ts`.
+        // Without this, the TUI's `streamText` calls would never
+        // honor `config.log.*` because the TUI does not run through
+        // `cli/bootstrap.ts`. Mirrors the boot path in
+        // `cli/bootstrap.ts:21-23` exactly.
+        await AppRuntime.runPromise(wireAppTranscriptLog).catch((err) =>
+          Log.Default.warn("transcript-log wire failed", { error: String(err) }),
+        )
+        // PR-3 step 1 — wire the monitor bridge for the bash
+        // long-running monitor. Without this, hung bash commands
+        // (5-min `npm install`, infinite loops, stuck network calls)
+        // are never detected and the TUI never sees a
+        // `BashLongRunningWarn` toast. Mirrors the boot path in
+        // `cli/bootstrap.ts`.
+        await AppRuntime.runPromise(wireAppMonitor).catch((err) =>
+          Log.Default.warn("monitor-bridge wire failed", { error: String(err) }),
+        )
         await upgrade().catch(() => {})
       },
     })

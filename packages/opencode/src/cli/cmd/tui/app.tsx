@@ -1072,6 +1072,29 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     })()
   })
 
+  // PR-3 step 6 — subscribe to `tool.bash.long-running.warn`. The
+  // bash long-running monitor (Phase 3) publishes this event when
+  // its sub-actor returns `kind: "warn"`. We surface it as a
+  // transient warning toast so the user sees that a hung or
+  // suspicious command is still running. The toast is single-slot
+  // (replaces the previous one); the user can also see the full
+  // transcript log via the `session.llm_log` command (PR-2).
+  event.on("tool.bash.long-running.warn", (evt) => {
+    const props = evt.properties as {
+      sessionID?: string
+      messageID?: string
+      callID?: string
+      reason?: string
+      elapsedMs?: number
+    }
+    toast.show({
+      title: "Long-running bash command",
+      message: props.reason ?? "Command is taking longer than expected",
+      variant: "warning",
+      duration: 8000,
+    })
+  })
+
   const plugin = createMemo(() => {
     if (!ready()) return
     if (route.data.type !== "plugin") return

@@ -81,6 +81,7 @@ import { Global } from "@/global"
 import { PermissionPrompt } from "./permission"
 import { QuestionPrompt } from "./question"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
+import { DialogLlmLog } from "../../component/dialog-llm-log"
 import * as Model from "../../util/model"
 import { formatTranscript } from "../../util/transcript"
 import { UI } from "@/cli/ui.ts"
@@ -955,6 +956,28 @@ export function Session() {
         } catch {
           toast.show({ message: "Failed to export session", variant: "error" })
         }
+        dialog.clear()
+      },
+    },
+    {
+      // PR-2 step 8 — "View LLM transcript log" menu entry. Mirrors
+      // the shape of session.copy / session.export (no keybind by
+      // default; slash alias `/llm-log`). Opens the read-only
+      // DialogLlmLog viewer which fetches the per-session JSONL
+      // events from `GET /session/:sessionID/llm-log`.
+      title: t("tui.command.session.llm_log.title"),
+      value: "session.llm_log",
+      keybind: "session_llm_log",
+      category: "session",
+      slash: { name: "llm-log" },
+      onSelect: async (dialog) => {
+        const sessionData = session()
+        if (!sessionData) {
+          toast.show({ message: "No active session", variant: "error" })
+          dialog.clear()
+          return
+        }
+        await DialogLlmLog.show(dialog, sessionData.id)
         dialog.clear()
       },
     },

@@ -311,6 +311,7 @@ export const dict: Record<string, string> = {
   "tui.command.messages.copy.title": "Copy last assistant message",
   "tui.command.session.copy.title": "Copy session transcript",
   "tui.command.session.export.title": "Export session transcript",
+  "tui.command.session.llm_log.title": "View LLM transcript log",
   "tui.command.session.child_first.title": "Go to child session",
   "tui.command.session.parent.title": "Go to parent session",
   "tui.command.session.child_next.title": "Next child session",
