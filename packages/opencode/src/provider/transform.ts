@@ -966,6 +966,30 @@ export function options(input: {
     result["store"] = false
   }
 
+  // PR-2 step 3 — `includeRawChunks` plumbing (top-level form).
+  // The in-tree GitHub Copilot SDK paths
+  // (`provider/sdk/copilot/{chat,responses}/...`) read this flag
+  // from the `providerOptions.copilot` namespace and emit raw SSE
+  // chunks as `{ type: "raw", rawValue }` stream parts, which
+  // `session/llm.ts` then persists to the transcript log.
+  //
+  // We emit the flag at the top of `options()` because the flag is
+  // a *call-time* toggle, not a *factory-time* option. Downstream,
+  // `providerOptions(model, params.options)` (called at
+  // `session/llm.ts:684`) wraps the whole result under the SDK
+  // namespace (e.g. `{ copilot: { includeRawChunks: true, store: false } }`),
+  // and the Copilot SDK picks it up via its existing
+  // `parseProviderOptions(providerOptions?.["copilot"])` parser.
+  //
+  // The flag is gated on the model's npm package because only the
+  // in-tree Copilot SDK reads it today. Upstream `@ai-sdk/*`
+  // packages don't expose `includeRawChunks`, so the flag is
+  // silently dropped for those providers and the structured
+  // `messages` write path stays active.
+  if (input.model.api.npm === "@ai-sdk/github-copilot" && input.providerOptions?.includeRawChunks === true) {
+    result["includeRawChunks"] = true
+  }
+
   if (input.model.api.npm === "@ai-sdk/azure") {
     result["store"] = true
     result["promptCacheKey"] = input.sessionID
