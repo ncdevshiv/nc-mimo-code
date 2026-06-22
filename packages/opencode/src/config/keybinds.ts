@@ -24,6 +24,10 @@ const KeybindsSchema = Schema.Struct({
   username_toggle: keybind("none", "Toggle username visibility"),
   status_view: keybind("<leader>s", "View status"),
   session_export: keybind("<leader>x", "Export session to editor"),
+  // PR-2 step 8 — opt-in keybind for the new "View LLM transcript log"
+  // command. Default `"none"` so users who don't want a chord collision
+  // are unaffected; assign e.g. `"<leader>L"` to bind it.
+  session_llm_log: keybind("none", "View LLM transcript log for session"),
   session_new: keybind("<leader>n", "Create a new session"),
   session_list: keybind("<leader>l", "List all sessions"),
   session_timeline: keybind("<leader>g", "Show session timeline"),

@@ -29,11 +29,13 @@ import { ConfigAgent } from "./agent"
 import { ConfigCommand } from "./command"
 import { ConfigFormatter } from "./formatter"
 import { ConfigHistory } from "./history"
+import { ConfigInstallation } from "./installation"
 import { ConfigLayout } from "./layout"
 import { ConfigLSP } from "./lsp"
 import { ConfigManaged } from "./managed"
 import { ConfigMCP } from "./mcp"
 import { ConfigModelID } from "./model-id"
+import { ConfigLog } from "./log"
 import { ConfigMonitor } from "./monitor"
 import { ConfigParse } from "./parse"
 import { ConfigPaths } from "./paths"
@@ -136,6 +138,14 @@ const InfoSchema = Schema.Struct({
   monitor: Schema.optional(ConfigMonitor.Info).annotate({
     description:
       "Monitor subsystem configuration. The bash tool forks the bash-long-running sub-actor after `defaultTimeoutMs` and acts on its assessment (continue / warn / terminate).",
+  }),
+  log: Schema.optional(ConfigLog.Info).annotate({
+    description:
+      "Logging configuration. The `enabled` flag turns on the per-session LLM-transcript log (default off; check `nc-mimo-code llm-log <sessionID>` to read it). `retentionDays` controls automatic purging of old files (default 30). `redactKeys` is the list of lowercased JSON keys whose values are redacted before write.",
+  }),
+  installation: Schema.optional(ConfigInstallation.Info).annotate({
+    description:
+      "Installation / uninstall channel configuration. `channels` lists the package managers this build is published to; the uninstall command renders and runs the matching uninstall command for the detected install method. Defaults to ['npm','pnpm','bun'] for the npm-published build.",
   }),
   actor: Schema.optional(
     Schema.Struct({

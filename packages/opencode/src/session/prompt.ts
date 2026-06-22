@@ -97,7 +97,8 @@ export function recallHintLines(toolCfg: ToolStyleConfig | undefined): string[] 
  * Cap on goal-driven main-loop re-entries per turn — the safety valve against
  * a never-satisfiable condition burning tokens forever. Higher than spawned
  * actors' MAX_PRE_REACT (=3) because main-session goals are usually larger.
- * TODO: lift to nc-mimo-code.json config (e.g. session.maxGoalReact).
+ * Lifted to `session.maxGoalReact` config (commit 6ea9440); this
+ * constant is the per-invocation fallback when the config is unset.
  */
 const MAX_GOAL_REACT = 12
 
