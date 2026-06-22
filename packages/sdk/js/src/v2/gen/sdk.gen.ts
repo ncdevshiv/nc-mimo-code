@@ -142,6 +142,8 @@ import type {
   SessionInitErrors,
   SessionInitResponses,
   SessionListResponses,
+  SessionLlmLogErrors,
+  SessionLlmLogResponses,
   SessionMessageErrors,
   SessionMessageResponses,
   SessionMessagesErrors,
@@ -2373,6 +2375,42 @@ export class Session2 extends HeyApiClient {
     )
     return (options?.client ?? this.client).get<SessionMessageResponses, SessionMessageErrors, ThrowOnError>({
       url: "/session/{sessionID}/message/{messageID}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get session LLM-transcript log
+   *
+   * Read the per-session LLM-transcript events (one JSON line per assistant message). The log is opt-in (requires `config.log.enabled = true`). Each event captures the model, the request body, the response, and the tool calls. Use `?tool=<name>` to filter to events that included a call to a specific tool, and `?last=<n>` to limit to the most recent N events.
+   */
+  public llmLog<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      tool?: string
+      last?: number
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "tool" },
+            { in: "query", key: "last" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionLlmLogResponses, SessionLlmLogErrors, ThrowOnError>({
+      url: "/session/{sessionID}/llm-log",
       ...options,
       ...params,
     })
