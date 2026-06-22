@@ -18,6 +18,7 @@ const KNOWN_VERBS = [
   "done",
   "abandon",
   "rename",
+  "revise",
 ]
 
 const id = "task"
@@ -87,6 +88,19 @@ const renameOperation = z.strictObject({
   session_id: z.string().min(1).optional().describe("Session id to act on. Defaults to current session."),
 })
 
+// Audit §10: `revise` is a softer version of `rename` for
+// in-progress tasks. Both `summary` and `event_summary` are
+// optional — the LLM can update just the summary, just leave a
+// note, or both. The underlying DB write is the same as
+// `rename`; `event_summary` is logged as a task event.
+const reviseOperation = z.strictObject({
+  action: z.literal("revise"),
+  id: z.string().min(1).describe("Task id, e.g. T1 or T1.1."),
+  summary: z.string().min(1).optional().describe("New task summary (omit to keep the current one)."),
+  event_summary: z.string().min(1).optional().describe("Short note describing the revision."),
+  session_id: z.string().min(1).optional().describe("Session id to act on. Defaults to current session."),
+})
+
 const parameters = z.strictObject({
   // .meta({ type: "object" }) is REQUIRED — without it, the emitted JSON
   // schema's `operation` node has only `anyOf`, no `type`. Some models
@@ -104,6 +118,7 @@ const parameters = z.strictObject({
       doneOperation,
       abandonOperation,
       renameOperation,
+      reviseOperation,
     ])
     .meta({ type: "object" }),
 })
@@ -258,6 +273,29 @@ function mapVerb(verb: string | undefined, args: string[], line: number): Effect
       if (rest.length !== 2) return arityError("rename", "<id> <summary> [--session <id>]", rest, line)
       return Effect.succeed({ operation: { action: "rename" as const, id: rest[0], summary: rest[1], ...(flags.session ? { session_id: flags.session } : {}) } })
     }
+    case "revise": {
+      // `task revise <id> [--summary <text>] [--note <text>] [--session <id>]`
+      // At least one of --summary or --note is required. The
+      // string-positional form is rejected to keep the verb
+      // unambiguous: rename uses positional summary, revise uses
+      // flags so the model can't accidentally clobber a summary
+      // with a note or vice versa.
+      const { flags, rest, error } = extractTaskFlags(args, ["session", "summary", "note"], [])
+      if (error) return flagError("revise", error, line)
+      if (rest.length !== 1) return arityError("revise", "<id> [--summary <text>] [--note <text>] [--session <id>]", rest, line)
+      if (!flags.summary && !flags.note) {
+        return flagError("revise", "at least one of --summary or --note is required", line)
+      }
+      return Effect.succeed({
+        operation: {
+          action: "revise" as const,
+          id: rest[0],
+          ...(flags.summary ? { summary: flags.summary } : {}),
+          ...(flags.note ? { event_summary: flags.note } : {}),
+          ...(flags.session ? { session_id: flags.session } : {}),
+        },
+      })
+    }
     default: {
       const suggestion = suggestVerb(verb ?? "", KNOWN_VERBS)
       const detail =
@@ -363,6 +401,18 @@ export const TaskTool = Tool.define<typeof parameters, Metadata, TaskRegistry.Se
       }
 
       if (op.action === "done") {
+        // Audit §10: terminal-state transitions were unguarded —
+        // a confused model could mark real work "done" or
+        // "abandoned" without the user seeing the change. Ask the
+        // user for permission before flipping the task to a
+        // terminal state. The `patterns` field is the task id so
+        // the user can read it back in the approval prompt.
+        yield* ctx.ask({
+          permission: "task",
+          patterns: [op.id],
+          always: [op.id],
+          metadata: { action: "done", id: op.id, event_summary: op.event_summary },
+        })
         const result = yield* reg.done({ session_id: sessionID, id: op.id, event_summary: op.event_summary })
         return {
           title: `Task ${op.id}: done`,
@@ -372,6 +422,12 @@ export const TaskTool = Tool.define<typeof parameters, Metadata, TaskRegistry.Se
       }
 
       if (op.action === "abandon") {
+        yield* ctx.ask({
+          permission: "task",
+          patterns: [op.id],
+          always: [op.id],
+          metadata: { action: "abandon", id: op.id, event_summary: op.event_summary },
+        })
         const result = yield* reg.abandon({ session_id: sessionID, id: op.id, event_summary: op.event_summary })
         return {
           title: `Task ${op.id}: abandoned`,
@@ -385,6 +441,36 @@ export const TaskTool = Tool.define<typeof parameters, Metadata, TaskRegistry.Se
         return {
           title: `Task ${op.id}: renamed`,
           output: `rename → "${result.summary}"`,
+          metadata: { id: result.id, status: result.status } as Metadata,
+        }
+      }
+
+      if (op.action === "revise") {
+        // Audit §10: `revise` is a softer version of `rename` for
+        // in-progress tasks. `summary` is optional — if omitted
+        // we just record the `event_summary` (or no-op if both
+        // are missing). To avoid the no-op case silently
+        // returning a stale task, the schema requires at least
+        // one of the two to be provided.
+        if (!op.summary && !op.event_summary) {
+          return yield* Effect.fail(new Error("revise requires at least one of `summary` or `event_summary`"))
+        }
+        // If only the event_summary is provided (no rename), we
+        // still need to pass `summary` to `reg.rename`. Look it
+        // up first to avoid clobbering.
+        let result
+        if (op.summary) {
+          result = yield* reg.rename({ session_id: sessionID, id: op.id, summary: op.summary })
+        } else {
+          const current = yield* reg.get({ session_id: sessionID, id: op.id })
+          if (!current) return yield* Effect.die(`Task ${op.id} not found in session ${sessionID}`)
+          result = current
+        }
+        return {
+          title: `Task ${op.id}: revised`,
+          output: op.summary
+            ? `revise → "${result.summary}"${op.event_summary ? ` (note: ${op.event_summary})` : ""}`
+            : `revise (note: ${op.event_summary})`,
           metadata: { id: result.id, status: result.status } as Metadata,
         }
       }

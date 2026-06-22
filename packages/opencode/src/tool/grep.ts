@@ -22,8 +22,35 @@ export const GrepTool = Tool.define(
         pattern: z.string().describe("The regex pattern to search for in file contents"),
         path: z.string().optional().describe("The directory to search in. Defaults to the current working directory."),
         include: z.string().optional().describe('File pattern to include in the search (e.g. "*.js", "*.{ts,tsx}")'),
+        context: z
+          .union([
+            z.number().int().nonnegative(),
+            z.object({
+              before: z.number().int().nonnegative(),
+              after: z.number().int().nonnegative(),
+            }),
+          ])
+          .optional()
+          .describe(
+            "Number of context lines around each match. A number applies symmetrically (ripgrep `-C`); pass `{before, after}` for asymmetric (ripgrep `-B` + `-A`). PR-1 step 6.",
+          ),
+        result_format: z
+          .enum(["content", "files_with_matches", "count"])
+          .optional()
+          .describe(
+            "Output format. `content` (default) emits `path:line: text`. `files_with_matches` emits only paths. `count` emits a per-file match count. PR-1 step 6.",
+          ),
       }),
-      execute: (params: { pattern: string; path?: string; include?: string }, ctx: Tool.Context) =>
+      execute: (
+        params: {
+          pattern: string
+          path?: string
+          include?: string
+          context?: number | { before: number; after: number }
+          result_format?: "content" | "files_with_matches" | "count"
+        },
+        ctx: Tool.Context,
+      ) =>
         Effect.gen(function* () {
           const empty = {
             title: params.pattern,
@@ -63,11 +90,38 @@ export const GrepTool = Tool.define(
             pattern: params.pattern,
             glob: params.include ? [params.include] : undefined,
             file,
+            context: params.context,
+            resultFormat: params.result_format ?? "content",
             signal: ctx.abort,
           })
-          if (result.items.length === 0) return empty
 
-          const rows = result.items.map((item) => ({
+          // Short-circuit path for non-`content` formats: the ripgrep
+          // wrapper already parsed the output into plain lines and
+          // added a `resultFormat` echo. Render directly without the
+          // mtime sort / per-line truncation logic that only makes
+          // sense for the structured `content` shape.
+          if (result.resultFormat !== "content") {
+            const lines = result.items
+            if (lines.length === 0) return empty
+            if (result.resultFormat === "files_with_matches") {
+              return {
+                title: params.pattern,
+                metadata: { matches: lines.length, truncated: false, format: "files_with_matches" },
+                output: `Found ${lines.length} files\n\n${lines.join("\n")}`,
+              }
+            }
+            // `count`: lines look like `path:N`.
+            return {
+              title: params.pattern,
+              metadata: { matches: lines.length, truncated: false, format: "count" },
+              output: `Match counts:\n\n${lines.join("\n")}`,
+            }
+          }
+
+          const items = result.items
+          if (items.length === 0) return empty
+
+          const rows = items.map((item) => ({
             path: AppFileSystem.resolve(
               path.isAbsolute(item.path.text) ? item.path.text : path.join(cwd, item.path.text),
             ),

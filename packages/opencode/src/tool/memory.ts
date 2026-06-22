@@ -5,8 +5,16 @@ import DESCRIPTION from "./memory.txt"
 import * as Tool from "./tool"
 
 const parameters = z.object({
-  operation: z.enum(["search"]).default("search").describe("Memory operation to perform"),
-  query: z.string().describe("Search query (BM25 over markdown bodies)"),
+  // Audit §10: `memory` is no longer a misnomer — `write` was
+  // added so the LLM can persist a note/learning/memory and find
+  // it later via `search`. The default `search` is applied at the
+  // call site (not via `.default()`) to keep the Zod
+  // input/output types aligned for the Tool.Def type signature.
+  operation: z
+    .enum(["search", "write"])
+    .optional()
+    .describe("Memory operation: 'search' (default) reads; 'write' persists a new memory file."),
+  query: z.string().optional().describe("Search query (BM25 over markdown bodies). Required for operation=search."),
   scope: z.enum(["global", "projects", "sessions", "cc"]).optional().describe("Filter by memory scope"),
   scope_id: z
     .string()
@@ -17,6 +25,32 @@ const parameters = z.object({
     .optional()
     .describe("Filter by memory type (pinned, snapshot, learning, progress, free, ...)"),
   limit: z.number().optional().describe("Max results (default 10)"),
+  // write params — required when operation=write
+  key: z
+    .string()
+    .optional()
+    .describe(
+      "write-only. Memory key (e.g. 'project/foo', 'memory', 'checkpoint'). Rejected if it contains '..' or starts with '/' (path-traversal guard).",
+    ),
+  body: z
+    .string()
+    .optional()
+    .describe("write-only. The markdown body to persist. Required when operation=write."),
+  // The default `scope` for `write` is `global` (the simplest
+  // cross-session slot). `cc` is excluded — the CC tree is
+  // read-only here.
+  write_scope: z
+    .enum(["global", "projects", "sessions"])
+    .optional()
+    .describe("write-only. Where to write. Default 'global'. 'cc' is not writable."),
+  write_scope_id: z
+    .string()
+    .optional()
+    .describe("write-only. Scope id (e.g. project id hash, session id). Required for write_scope='projects' or 'sessions'."),
+  write_type: z
+    .enum(["free", "memory", "checkpoint", "progress", "notes", "feedback", "project", "reference", "user"])
+    .optional()
+    .describe("write-only. Memory type tag. Default 'free'."),
 })
 
 export const MemoryTool = Tool.define(
@@ -27,15 +61,60 @@ export const MemoryTool = Tool.define(
       description: DESCRIPTION,
       parameters,
       formatValidationError: Tool.formatZodError({
-        operation: { type: '"search"', required: true, values: ["search"] },
-        query: { type: "string (BM25 query)", required: true },
+        operation: { type: '"search" | "write"', required: true, values: ["search", "write"] },
+        query: { type: "string (BM25 query)", required: false, note: "required when operation=search" },
         scope: { type: '"global" | "projects" | "sessions" | "cc"', required: false, values: ["global", "projects", "sessions", "cc"] },
         scope_id: { type: "string", required: false },
         type: { type: "string (memory type filter)", required: false },
         limit: { type: "number (default 10)", required: false },
+        key: { type: "string (memory key)", required: false, note: "required when operation=write" },
+        body: { type: "string (markdown body)", required: false, note: "required when operation=write" },
+        write_scope: { type: '"global" | "projects" | "sessions"', required: false, values: ["global", "projects", "sessions"] },
+        write_scope_id: { type: "string", required: false },
+        write_type: { type: "free | memory | checkpoint | progress | notes | feedback | project | reference | user", required: false },
       }),
       execute: (args: z.infer<typeof parameters>) =>
         Effect.gen(function* () {
+          const operation = args.operation ?? "search"
+          if (operation === "write") {
+            if (!args.key) {
+              return {
+                title: "Memory write: missing key",
+                output: "operation=write requires a `key` argument.",
+                metadata: { count: 0, created: false as const, path: "" },
+              }
+            }
+            if (!args.body) {
+              return {
+                title: "Memory write: missing body",
+                output: "operation=write requires a `body` argument.",
+                metadata: { count: 0, created: false as const, path: "" },
+              }
+            }
+            const result = yield* memory
+              .write({
+                key: args.key,
+                body: args.body,
+                scope: args.write_scope,
+                scope_id: args.write_scope_id,
+                type: args.write_type,
+              })
+              .pipe(Effect.orDie)
+            return {
+              title: `Memory write: ${args.key}${result.created ? " (created)" : " (overwritten)"}`,
+              output: `Wrote ${result.path} (${result.created ? "new file" : "overwrote existing"}).\n\nFuture \`memory\` searches with operation=search will pick this up.`,
+              metadata: { count: 1, created: result.created, path: result.path },
+            }
+          }
+
+          // operation=search (default)
+          if (!args.query) {
+            return {
+              title: "Memory search: missing query",
+              output: "operation=search requires a `query` argument.",
+              metadata: { count: 0, created: false as const, path: "" },
+            }
+          }
           const results = yield* memory.search({
             query: args.query,
             scope: args.scope,
@@ -60,7 +139,7 @@ export const MemoryTool = Tool.define(
                 `   conversation), which keeps original messages.`,
                 `Widen scope progressively: session → project → global → history.`,
               ].join("\n"),
-              metadata: { count: 0 },
+              metadata: { count: 0, created: false as const, path: "" },
             }
           }
           const lines = [
@@ -81,7 +160,7 @@ export const MemoryTool = Tool.define(
           return {
             title: `Memory search: ${results.length} result${results.length === 1 ? "" : "s"}`,
             output: lines.join("\n"),
-            metadata: { count: results.length },
+            metadata: { count: results.length, created: false as const, path: "" },
           }
         }),
     }

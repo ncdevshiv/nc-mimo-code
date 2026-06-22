@@ -33,6 +33,21 @@ const parameters = z.object({
   time_after: z.number().optional().describe("Unix ms"),
   time_before: z.number().optional(),
   limit: z.number().optional().describe("Max 50, default 10"),
+  // Audit §10 (tool-audit.md "Memory/History tools"): the LLM
+  // used to pay the same cost for "which sessions touched X?" as
+  // for full-text search. `ids` returns just IDs (cheap);
+  // `snippets` (default — back-compat) is the existing format;
+  // `full` is the full snippet body with no per-line truncation.
+  // Applies to `operation=search` only; `around` already returns
+  // full text by design. The default is applied at the call site
+  // (not via `.default()`) to keep the Zod input/output types
+  // aligned for the Tool.Def type signature.
+  result_format: z
+    .enum(["ids", "snippets", "full"])
+    .optional()
+    .describe(
+      "How much to render per hit. 'ids' = session_id + message_id only (cheap, for 'which sessions touched X?'). 'snippets' (default) = current behavior. 'full' = full snippet body.",
+    ),
   // around params
   message_id: z.string().optional().describe("Anchor message id. Required for operation=around."),
   before: z.number().optional().describe("Default 5"),
@@ -58,6 +73,7 @@ export const HistoryTool = Tool.define(
         time_after: { type: "number (Unix ms)", required: false },
         time_before: { type: "number (Unix ms)", required: false },
         limit: { type: "number (max 50)", required: false },
+        result_format: { type: '"ids" | "snippets" | "full"', required: false, values: ["ids", "snippets", "full"], note: "search-only; default snippets" },
         message_id: { type: "string", required: false, note: "required when operation=around" },
         before: { type: "number (default 5)", required: false },
         after: { type: "number (default 5)", required: false },
@@ -90,12 +106,35 @@ export const HistoryTool = Tool.define(
               }
             }
             const lines = [`Found ${hits.length} match${hits.length === 1 ? "" : "es"}:`, ""]
+            const format: "ids" | "snippets" | "full" = args.result_format ?? "snippets"
             for (const h of hits) {
               const kindLabel = h.tool_name ? `${h.kind} · ${h.tool_name}` : h.kind
-              lines.push(`### ${h.session_id} ${h.message_id}  (${kindLabel})`)
-              lines.push(`Time: ${new Date(h.time_created).toISOString()}, Score: ${h.score.toFixed(3)}`)
-              lines.push(h.snippet)
-              lines.push("")
+              if (format === "ids") {
+                // Audit §10: "which sessions touched X?" is the
+                // most common history search and the snippet is
+                // the expensive part. `ids` is cheap and lets the
+                // LLM chain into `around` for the sessions it
+                // actually wants context on.
+                lines.push(`### ${h.session_id} ${h.message_id}  (${kindLabel})`)
+              } else if (format === "full") {
+                // Same as `snippets` today (the snippet body
+                // already comes back at full length from the FTS
+                // layer; the existing `AROUND_MAX_BYTES` cap was
+                // only for `operation=around`). The `full` value
+                // exists so the LLM can be explicit that it wants
+                // the untruncated body when the snippet is too
+                // short to be useful.
+                lines.push(`### ${h.session_id} ${h.message_id}  (${kindLabel})`)
+                lines.push(`Time: ${new Date(h.time_created).toISOString()}, Score: ${h.score.toFixed(3)}`)
+                lines.push(h.snippet)
+                lines.push("")
+              } else {
+                // snippets (default) — the existing format.
+                lines.push(`### ${h.session_id} ${h.message_id}  (${kindLabel})`)
+                lines.push(`Time: ${new Date(h.time_created).toISOString()}, Score: ${h.score.toFixed(3)}`)
+                lines.push(h.snippet)
+                lines.push("")
+              }
             }
             return {
               title: `History search: ${hits.length} match${hits.length === 1 ? "" : "es"}`,

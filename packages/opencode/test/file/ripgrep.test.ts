@@ -74,6 +74,8 @@ describe("file.ripgrep", () => {
 
     const result = await run(Ripgrep.Service.use((rg) => rg.search({ cwd: tmp.path, pattern: "needle" })))
     expect(result.partial).toBe(false)
+    expect(result.resultFormat).toBe("content")
+    if (result.resultFormat !== "content") throw new Error("expected content format")
     expect(result.items).toHaveLength(1)
     expect(result.items[0]?.path.text).toBe(path.join("src", "match.ts"))
     expect(result.items[0]?.line_number).toBe(1)
@@ -92,6 +94,7 @@ describe("file.ripgrep", () => {
       Ripgrep.Service.use((rg) => rg.search({ cwd: tmp.path, pattern: "needle", glob: ["*.ts"] })),
     )
     expect(result.partial).toBe(false)
+    if (result.resultFormat !== "content") throw new Error("expected content format")
     expect(result.items).toHaveLength(1)
     expect(result.items[0]?.path.text).toContain("match.ts")
     expect(result.items[0]?.lines.text).toContain("needle")
@@ -108,6 +111,7 @@ describe("file.ripgrep", () => {
     const file = path.join(tmp.path, "match.ts")
     const result = await run(Ripgrep.Service.use((rg) => rg.search({ cwd: tmp.path, pattern: "needle", file: [file] })))
     expect(result.partial).toBe(false)
+    if (result.resultFormat !== "content") throw new Error("expected content format")
     expect(result.items).toHaveLength(1)
     expect(result.items[0]?.path.text).toBe(file)
   })

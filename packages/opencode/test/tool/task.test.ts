@@ -294,3 +294,144 @@ describe("task tool: independent lifecycle verbs", () => {
     ),
   )
 })
+
+// Audit §10: `revise` is the new in-progress task update action
+// (softer than `rename` — `summary` is optional). And `done` /
+// `abandon` now require a permission ask.
+describe("task tool: revise", () => {
+  it.live("revise with a new summary updates the task", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const sess = yield* session.create({ title: "Test" })
+        const info = yield* TaskTool
+        const tool = yield* info.init()
+        const ctxObj = ctx(sess.id)
+        yield* tool.execute({ operation: { action: "create", summary: "Old" } }, ctxObj)
+        const result = yield* tool.execute(
+          { operation: { action: "revise", id: "T1", summary: "New" } },
+          ctxObj,
+        )
+        expect(result.output).toContain("New")
+        expect(result.metadata.id).toBe("T1")
+      }),
+    ),
+  )
+
+  it.live("revise with only an event_summary preserves the existing summary", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const reg = yield* TaskRegistry.Service
+        const sess = yield* session.create({ title: "Test" })
+        const info = yield* TaskTool
+        const tool = yield* info.init()
+        const ctxObj = ctx(sess.id)
+        yield* tool.execute({ operation: { action: "create", summary: "Stable" } }, ctxObj)
+        const result = yield* tool.execute(
+          { operation: { action: "revise", id: "T1", event_summary: "spike ran, no change needed" } },
+          ctxObj,
+        )
+        // The output includes the note…
+        expect(result.output).toContain("spike ran, no change needed")
+        expect(result.metadata.id).toBe("T1")
+        // …and the task's stored summary is unchanged.
+        const t = yield* reg.get({ session_id: sess.id, id: "T1" })
+        expect(t?.summary).toBe("Stable")
+      }),
+    ),
+  )
+
+  it.live("revise with neither summary nor event_summary fails fast", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const sess = yield* session.create({ title: "Test" })
+        const info = yield* TaskTool
+        const tool = yield* info.init()
+        const ctxObj = ctx(sess.id)
+        yield* tool.execute({ operation: { action: "create", summary: "X" } }, ctxObj)
+        const exit = yield* tool
+          .execute({ operation: { action: "revise", id: "T1" } }, ctxObj)
+          .pipe(Effect.exit)
+        expect(exit._tag).toBe("Failure")
+      }),
+    ),
+  )
+})
+
+describe("task tool: done/abandon permission ask", () => {
+  // The `ask` is captured in a local list. After the call we
+  // assert exactly one ask fired and the action matches.
+  function capturingCtx(sessionID: string) {
+    const asks: Array<{ permission: string; patterns: string[]; metadata: unknown }> = []
+    return {
+      asks,
+      ctx: {
+        ...ctx(sessionID),
+        ask: (req: { permission: string; patterns: string[]; metadata: unknown }) =>
+          Effect.sync(() => asks.push(req)),
+      },
+    }
+  }
+
+  it.live("done asks for permission before flipping to terminal", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const sess = yield* session.create({ title: "Test" })
+        const info = yield* TaskTool
+        const tool = yield* info.init()
+        const { ctx: ctxObj, asks } = capturingCtx(sess.id)
+        yield* tool.execute({ operation: { action: "create", summary: "X" } }, ctxObj)
+        yield* tool.execute({ operation: { action: "start", id: "T1" } }, ctxObj)
+        // Reset asks so we only count the done ask.
+        asks.length = 0
+        const result = yield* tool.execute({ operation: { action: "done", id: "T1" } }, ctxObj)
+        expect(asks.length).toBe(1)
+        expect(asks[0].permission).toBe("task")
+        expect(asks[0].patterns).toContain("T1")
+        expect(result.metadata.id).toBe("T1")
+        expect(result.metadata.status).toBe("done")
+      }),
+    ),
+  )
+
+  it.live("abandon asks for permission before flipping to terminal", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const sess = yield* session.create({ title: "Test" })
+        const info = yield* TaskTool
+        const tool = yield* info.init()
+        const { ctx: ctxObj, asks } = capturingCtx(sess.id)
+        yield* tool.execute({ operation: { action: "create", summary: "X" } }, ctxObj)
+        asks.length = 0
+        const result = yield* tool.execute({ operation: { action: "abandon", id: "T1" } }, ctxObj)
+        expect(asks.length).toBe(1)
+        expect(asks[0].permission).toBe("task")
+        expect(asks[0].patterns).toContain("T1")
+        expect(result.metadata.id).toBe("T1")
+        expect(result.metadata.status).toBe("abandoned")
+      }),
+    ),
+  )
+
+  it.live("non-terminal actions (start/block/unblock) do NOT ask for permission", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const sess = yield* session.create({ title: "Test" })
+        const info = yield* TaskTool
+        const tool = yield* info.init()
+        const { ctx: ctxObj, asks } = capturingCtx(sess.id)
+        yield* tool.execute({ operation: { action: "create", summary: "X" } }, ctxObj)
+        asks.length = 0
+        yield* tool.execute({ operation: { action: "start", id: "T1" } }, ctxObj)
+        yield* tool.execute({ operation: { action: "block", id: "T1", event_summary: "stuck" } }, ctxObj)
+        yield* tool.execute({ operation: { action: "unblock", id: "T1", event_summary: "unstuck" } }, ctxObj)
+        expect(asks.length).toBe(0)
+      }),
+    ),
+  )
+})

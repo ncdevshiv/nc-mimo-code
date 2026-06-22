@@ -19,6 +19,8 @@ import { SessionCwd } from "./session-cwd"
 import { Snapshot } from "@/snapshot"
 import { assertWriteAllowed, askEditUnlessMemory } from "./external-directory"
 import { AppFileSystem } from "@nc-mimo-code/shared/filesystem"
+import { LRU } from "@/util/lru"
+import { Log } from "@/util"
 
 function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
@@ -33,7 +35,13 @@ function convertToLineEnding(text: string, ending: "\n" | "\r\n"): string {
   return text.replaceAll("\n", "\r\n")
 }
 
-const locks = new Map<string, Semaphore.Semaphore>()
+// Process-global edit lock map. Bounded to 256 entries with a 10-minute
+// idle TTL (PR-1, step 5; see audit §Cross-cutting in tool-audit.md).
+// Without the bound, a long-running session editing many distinct files
+// would leak one `Semaphore` per file for the lifetime of the process.
+// The LRU evicts on insert when the cap is exceeded; TTL is checked on
+// read. `lock(filePath)` always promotes the entry to MRU.
+const locks = new LRU<string, Semaphore.Semaphore>(256, { ttlMs: 10 * 60 * 1000 })
 
 function lock(filePath: string) {
   const resolvedFilePath = AppFileSystem.resolve(filePath)
@@ -192,9 +200,23 @@ export const EditTool = Tool.define(
 
 export type Replacer = (content: string, find: string) => Generator<string, void, unknown>
 
-// Similarity thresholds for block anchor fallback matching
-const SINGLE_CANDIDATE_SIMILARITY_THRESHOLD = 0.0
+// Similarity thresholds for block anchor fallback matching. PR-1
+// raised the single-candidate threshold from 0.0 to 0.5: at 0.0 the
+// "single candidate" branch unconditionally accepted any anchor match,
+// which produced silent partial-match edits when the model's
+// `oldString` only roughly aligned with the file. The new value
+// matches the multi-candidate default. Edits that apply with
+// sub-threshold similarity still pass (preserving back-compat) but
+// emit a `Log.warn` so the user can see the near-miss via the
+// LLM-transcript log + console.
+const SINGLE_CANDIDATE_SIMILARITY_THRESHOLD = 0.5
 const MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD = 0.3
+// Above the similarity threshold but below this band, the edit applies
+// but logs a warning — the anchor matched loosely and the user should
+// review the result.
+const SINGLE_CANDIDATE_WARN_THRESHOLD = 0.7
+
+const editLog = Log.create({ service: "tool.edit" })
 
 /**
  * Levenshtein distance algorithm implementation
@@ -328,6 +350,16 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
     }
 
     if (similarity >= SINGLE_CANDIDATE_SIMILARITY_THRESHOLD) {
+      // Edits that apply with similarity in the single-candidate "barely
+      // passed" band are valid but surprising — the model's `oldString`
+      // only loosely matches the file. Emit a Log.warn so the user sees
+      // the near-miss in the console + LLM-transcript log.
+      if (similarity < SINGLE_CANDIDATE_WARN_THRESHOLD) {
+        editLog.warn("single-candidate anchor applied with low similarity", {
+          similarity,
+          threshold: SINGLE_CANDIDATE_SIMILARITY_THRESHOLD,
+        })
+      }
       let matchStartIndex = 0
       for (let k = 0; k < startLine; k++) {
         matchStartIndex += originalLines[k].length + 1

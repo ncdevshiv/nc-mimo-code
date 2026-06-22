@@ -16,6 +16,44 @@ type Options = {
   kind?: Kind
 }
 
+/**
+ * Per-session cache of "asked globs" — once `assertExternalDirectoryEffect`
+ * has issued a permission ask for a given glob in a given session, repeat
+ * calls for the same (sessionID, glob) short-circuit before the ask.
+ *
+ * Motivation: an explore agent reading 100 files in the same external
+ * directory used to trigger 100 permission asks — the audit's
+ * `tool-audit.md` §Cross-cutting flagged this. The cache is in-memory
+ * only (process-lifetime); a fresh process re-prompts. The cache does
+ * NOT consult `Permission.Service`'s `approved` set, so an "always"
+ * reply still takes the normal fast path through `Permission.ask`. The
+ * cache only suppresses redundant asks within a single session.
+ *
+ * `bypass: true`, the in-memory memory-region early return, and
+ * `interactive: false` (background-agent safety net, handled inside
+ * `Permission.Service`) all bypass the cache so the existing safety
+ * nets still trigger.
+ */
+const askedGlobsBySession = new Map<string, Set<string>>()
+
+export function _resetAskedGlobsCache(): void {
+  askedGlobsBySession.clear()
+}
+
+function alreadyAsked(sessionID: string, glob: string): boolean {
+  const set = askedGlobsBySession.get(sessionID)
+  return set?.has(glob) ?? false
+}
+
+function markAsked(sessionID: string, glob: string): void {
+  let set = askedGlobsBySession.get(sessionID)
+  if (!set) {
+    set = new Set()
+    askedGlobsBySession.set(sessionID, set)
+  }
+  set.add(glob)
+}
+
 export const assertExternalDirectoryEffect = Effect.fn("Tool.assertExternalDirectory")(function* (
   ctx: Tool.Context,
   target?: string,
@@ -43,6 +81,15 @@ export const assertExternalDirectoryEffect = Effect.fn("Tool.assertExternalDirec
       ? AppFileSystem.normalizePathPattern(path.join(dir, "*"))
       : path.join(dir, "*").replaceAll("\\", "/")
 
+  // Per-session cache hit: the user has already been asked about this glob
+  // in this session. The downstream `Permission.Service` will still evaluate
+  // any new `always: [glob]` rule added by an earlier "always" reply on a
+  // second pass, so the cache hit is a true short-circuit only when no
+  // approval rule was added. To keep the safety property explicit, we
+  // return BEFORE issuing the ask; if a permission rule was added the
+  // downstream `Permission.ask` would have short-circuited on its own.
+  if (alreadyAsked(ctx.sessionID, glob)) return
+
   yield* ctx.ask({
     permission: "external_directory",
     patterns: [glob],
@@ -52,6 +99,7 @@ export const assertExternalDirectoryEffect = Effect.fn("Tool.assertExternalDirec
       parentDir: dir,
     },
   })
+  markAsked(ctx.sessionID, glob)
 })
 
 export async function assertExternalDirectory(ctx: Tool.Context, target?: string, options?: Options) {

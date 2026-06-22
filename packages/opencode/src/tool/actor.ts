@@ -18,6 +18,7 @@ import { TaskRegistry } from "@/task/registry"
 import { TaskID } from "@/task/schema"
 import { SessionCheckpoint } from "@/session/checkpoint"
 import { inboxServiceRef } from "@/inbox/inbox-ref"
+import { optionalKeys } from "@/util/zod"
 import { Effect, Deferred } from "effect"
 
 export interface ActorPromptOps {
@@ -180,7 +181,19 @@ function inferAction(o: Record<string, unknown>): "run" | "spawn" {
 // stringified `{operation:"..."}` envelope, or an already-nested `{operation:{}}`.
 // Returns the parsed shape for shellWrap to route to execute (which zod-validates
 // it), or undefined if rawArgs can't be lifted.
-export function recoverActorArgs(rawArgs: unknown): ActorShellArgs | undefined {
+//
+// Audit §6.4.4: the carry-over whitelist for the bare-shape path is now
+// derived from the run/spawn Zod schemas (via `optionalKeys`) rather than
+// hardcoded. This means adding a new optional field to the run/spawn
+// schemas automatically flows through to the recover path — the previous
+// hardcoded list silently drifted from the schema. The `whitelist` arg is
+// the set of carry-over field names; the caller (tool init) computes it
+// from `optionalKeys(runSchema) ∪ optionalKeys(spawnSchema)` minus the
+// three required fields.
+export function recoverActorArgs(
+  rawArgs: unknown,
+  whitelist: ReadonlySet<string>,
+): ActorShellArgs | undefined {
   if (rawArgs == null || typeof rawArgs !== "object") return undefined
   let obj = rawArgs as Record<string, unknown>
   if (typeof obj.operation === "string") {
@@ -196,17 +209,15 @@ export function recoverActorArgs(rawArgs: unknown): ActorShellArgs | undefined {
   const prompt = obj.prompt
   if (typeof subagent_type === "string" && typeof description === "string" && typeof prompt === "string") {
     const op: Record<string, unknown> = { action: inferAction(obj), subagent_type, description, prompt }
-    // Carry only the optional fields a confused model plausibly puts at top level
-    // alongside the bare Task-prior triple. This is a deliberate subset of the
-    // run/spawn schema's optionals (model, actor_id, timeout_ms, command, context,
-    // task_id, output_schema) — the others (timeout_ms/command/context/output_schema)
-    // are dropped here, falling back to their schema defaults. Low risk in practice:
-    // the bare shape mimo emits is the 3 required fields, rarely with extras. When
-    // adding an actor schema field, decide whether bare-shape recover should carry
-    // it here, or this whitelist silently drifts from the schema.
-    if (typeof obj.model === "string") op.model = obj.model
-    if (typeof obj.task_id === "string") op.task_id = obj.task_id
-    if (typeof obj.actor_id === "string") op.actor_id = obj.actor_id
+    // Carry over every optional that the run/spawn schemas accept.
+    // The downstream `parameters` schema (the discriminated union
+    // over run/spawn/...) zod-validates the result, so any field
+    // whose value doesn't match its declared type will be rejected
+    // there. This matches the behavior of `parseActorScript`, the
+    // other shell-mode parser, which does not pre-validate either.
+    for (const key of whitelist) {
+      if (key in obj) op[key] = obj[key]
+    }
     return { operation: op } as ActorShellArgs
   }
   return undefined
@@ -413,6 +424,22 @@ export const ActorTool = Tool.define(
           ])
           .meta({ type: "object" }),
       })
+
+      // Audit §6.4.4: schema-driven whitelist for the bare-shape
+      // recover path. `recoverActorArgs` carries over every
+      // optional from either run/spawn when the LLM emits the bare
+      // `{subagent_type, description, prompt}` triple. The three
+      // required fields are subtracted — they're already in `op`
+      // from the bare shape and must not be re-set from the
+      // (possibly-missing) raw args.
+      const bareShapeWhitelist = new Set<string>([
+        ...optionalKeys(runSchema),
+        ...optionalKeys(spawnSchema),
+      ])
+      bareShapeWhitelist.delete("subagent_type")
+      bareShapeWhitelist.delete("description")
+      bareShapeWhitelist.delete("prompt")
+      const recover = (rawArgs: unknown) => recoverActorArgs(rawArgs, bareShapeWhitelist)
 
       const run = Effect.fn("ActorTool.execute")(function* (input: z.infer<typeof parameters>, ctx: Tool.Context) {
         const op = input.operation
@@ -754,7 +781,7 @@ export const ActorTool = Tool.define(
         shell: {
           description: SHELL_DESCRIPTION,
           parse: parseActorScript,
-          recover: recoverActorArgs,
+          recover,
         },
       }
     })
