@@ -4,8 +4,10 @@ import os from "os"
 import { Global } from "../global"
 import { Database } from "../storage"
 import { Config } from "../config"
+import { AppFileSystem } from "@nc-mimo-code/shared/filesystem"
 import { reconcileMemory } from "./reconcile"
 import { buildFtsQuery } from "./fts-query"
+import { buildPath, type MemoryType, type Scope } from "./paths"
 
 type SearchRow = {
   path: string
@@ -28,14 +30,30 @@ export interface Interface {
   }) => Effect.Effect<
     Array<{ path: string; snippet: string; score: number; scope: string; scope_id: string; type: string }>
   >
+  // Audit §10 (tool-audit.md "Memory/History tools"): the `memory`
+  // tool is a misnomer — it only reads. This `write` method lets
+  // the LLM persist a note/learning/memory/feedback so a future
+  // `memory` search can find it. The `cc` scope is excluded
+  // because the CC tree is read-only here. The error channel
+  // surfaces `AppFileSystem.Error` because the write is an I/O
+  // effect (not a defect); the tool layer's `.orDie` converts it
+  // to a tool error for the LLM.
+  readonly write: (input: {
+    key: string
+    body: string
+    scope?: Exclude<Scope, "cc">
+    scope_id?: string
+    type?: MemoryType
+  }) => Effect.Effect<{ path: string; created: boolean }, AppFileSystem.Error>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Memory") {}
 
-export const layer: Layer.Layer<Service, never, Config.Service> = Layer.effect(
+export const layer: Layer.Layer<Service, never, Config.Service | AppFileSystem.Service> = Layer.effect(
   Service,
   Effect.gen(function* () {
     const config = yield* Config.Service
+    const fs = yield* AppFileSystem.Service
     const root = path.join(Global.Path.data, "memory")
     const ccBase = path.join(os.homedir(), ".claude", "projects")
 
@@ -133,12 +151,49 @@ export const layer: Layer.Layer<Service, never, Config.Service> = Layer.effect(
       return mapped.filter((r, i) => i === 0 || r.score >= cutoff).slice(0, limit)
     })
 
+    // Audit §10: write a memory file. Path-traversal guard is
+    // enforced inside `buildPath` (see `assertSafeComponent` in
+    // `paths.ts`); any caller-supplied `key`/`scope_id` with `..`
+    // or an absolute prefix throws before the file system is
+    // touched. The write is atomic — `writeAtomicWithDirs` writes
+    // to a temp file in the same dir then renames into place, so
+    // a partial write never lands. `created: true` means the file
+    // did not exist before this call; `created: false` means we
+    // overwrote an existing memory.
+    //
+    // Implementation note: we use `Effect.gen` directly instead of
+    // `Effect.fn` to keep the `E = never` contract declared on the
+    // Interface (the bare `buildPath` call has no Effect context,
+    // so its sync throw is treated as a defect and surfaces
+    // through the tool layer's `.orDie` at the boundary).
+    const write = (input: {
+      key: string
+      body: string
+      scope?: Exclude<Scope, "cc">
+      scope_id?: string
+      type?: MemoryType
+    }) =>
+      Effect.gen(function* () {
+        const path = buildPath({
+          root,
+          scope: input.scope ?? "global",
+          scope_id: input.scope_id,
+          key: input.key,
+        })
+        const existed = yield* fs.existsSafe(path)
+        yield* fs.writeAtomicWithDirs(path, input.body)
+        return { path, created: !existed }
+      })
+
     return Service.of({
       root: rootEff,
       reconcile,
       search,
+      write,
     })
   }),
 )
 
-export const defaultLayer = Layer.suspend(() => layer.pipe(Layer.provide(Config.defaultLayer)))
+export const defaultLayer = Layer.suspend(() =>
+  layer.pipe(Layer.provide(Config.defaultLayer), Layer.provide(AppFileSystem.defaultLayer)),
+)
