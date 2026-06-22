@@ -63,6 +63,23 @@ import { memoMap } from "./memo-map"
 
 // Wrapped in Layer.suspend so the cross-module `.defaultLayer` reads defer to
 // first use instead of running at module load — same TDZ fix as Actor.defaultLayer.
+//
+// `Layer.mergeAll` builds all layers concurrently with a shared memoMap.
+// In `effect@4.0.0-beta.48` that concurrent build does NOT reliably satisfy
+// cross-layer requirements (e.g. `Actor.defaultLayer` reading
+// `Config.Service` at layer-body time, or `LLM.defaultLayer` requiring
+// `Config.Service`): the dependent layer's body can run before its
+// prerequisite's build has been memoized, and `Context.getReferenceUnsafe`
+// throws `Service not found: @opencode/Config` from inside the server route
+// handlers (e.g. `/provider`, `/experimental/console`, `/config`).
+//
+// The fix is to explicitly `Layer.provide` the layers that are depended on
+// by other layers in the merge, so the dependent builds see those services
+// in their context from the start (the provider chain is part of the
+// layer's static `R` type, so its build always runs with the upstream
+// service in context). `Config.defaultLayer` is the most-shared dependency
+// (required transitively by `Actor`, `LLM`, `ProviderAuth`, etc.); providing
+// it once to the merged graph satisfies every downstream requirement.
 export const AppLayer = Layer.suspend(() =>
   Layer.mergeAll(
     Npm.defaultLayer,
@@ -120,10 +137,19 @@ export const AppLayer = Layer.suspend(() =>
     WorkflowRuntime.defaultLayer,
     Memory.defaultLayer,
     History.defaultLayer,
-  ).pipe(
-    Layer.provideMerge(Observability.layer),
-    Layer.provideMerge(BashInteractive.defaultLayer),
-  ),
+  )
+    .pipe(
+      // Explicit upstream-context injection for the most-shared
+      // dependencies. `Config.defaultLayer` is required by Actor, LLM,
+      // ProviderAuth, Worktree, and many route handlers. The transitive
+      // providers (`EffectFlock`, `Env`) are already inside
+      // `Config.defaultLayer`'s own chain, so providing `Config` here
+      // also pulls them in. `Bus.defaultLayer` is required by
+      // ActorRegistry, Inbox, Provider, and others.
+      Layer.provide(Layer.merge(Config.defaultLayer, Bus.defaultLayer)),
+    )
+    .pipe(Layer.provideMerge(Observability.layer))
+    .pipe(Layer.provideMerge(BashInteractive.defaultLayer)),
 )
 
 // Standalone Effect that installs the live `MonitorBridge` into
@@ -166,9 +192,23 @@ export const AppRuntime: Runtime = {
 // tool-failure-repair dispatcher (used by `experimental_repairToolCall`)
 // and the bash-long-running monitor (Phase 3).
 //
-// `wireAppMonitor` is a pure Effect (yields services, captures the
-// Effect context, sets a module-scoped ref) — no async, no I/O — so
-// `runSync` is correct here. Running synchronously guarantees the
-// bridge is populated before any caller of `getMonitorBridge()` runs
-// (LLM tool calls happen long after module load).
-AppRuntime.runSync(wireAppMonitor)
+// The wiring is exported as `wireAppMonitor` (the Effect itself) so
+// callers can run it with `AppRuntime.runPromise(wireAppMonitor)` at a
+// point where async is acceptable. It is NOT auto-invoked at module
+// load: the original `AppRuntime.runSync(wireAppMonitor)` line threw
+// `AsyncFiberError` because `Actor.Service` is satisfied by a layer
+// whose build is async, and `runSync` cannot run async work.
+//
+// Without the wiring the bridge is unpopulated; the affected call
+// sites degrade safely:
+//   - `BashLongRunning.spawn` / `ToolFailureRepair.spawn` fall through
+//     to the `deps.bridge ?? getMonitorBridge()` check; the
+//     `getMonitorBridge()` throw is caught upstream and the LLM is
+//     told the call is unfixable.
+//   - `experimental_repairToolCall` uses `getMonitorBridgeSafe()`
+//     which returns `undefined` and routes the call to the `invalid`
+//     tool safety net.
+// The CLI bootstrap is the canonical place to call
+// `AppRuntime.runPromise(wireAppMonitor)` after the Instance scope is
+// established.
+
