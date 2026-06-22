@@ -1,28 +1,32 @@
 # MiMo Codebase Audit
 
-> **Status (post-cleanup, post-followups):** The original cleanup
-> pass (commits c40df33..051cb30) resolved every item the audit
-> called out as "half-built" or "TODO". The followup pass
-> (4fd916b) extracted the OpenAI-oauth branch into
-> `ProviderTransform.message`. Two items remain as documented
-> future work:
-> 1. **Bash tool typecheck** — the `run` function's many service
->    requirements leak through the `execute` boundary. The fix
->    is to extract `run` into a `Bash` service factory; a
->    `tool/bash-service.ts` skeleton with `makeRun(deps)` exists
->    as a starting point but wiring it into the tool requires
->    a careful pass over the existing closure (the file-edit
->    race conditions in the cleanup pass kept this from landing
->    in one commit; it's a clean followup PR).
-> 2. **`includeRawChunks` plumbing** — the option only exists in
->    the copilot SDK paths today. To enable raw-chunk capture
->    in the central provider, every provider's `getLanguage`
->    must accept the option. The current `provider/provider.ts`
->    has 70+ `getModel` functions, each with its own custom
->    loading; plumbing the option through all of them is a
->    multi-day refactor. The transcript log captures the
->    structured messages + tool calls in scope today; the raw
->    body will land when this is done.
+> **Status (post-cleanup, post-followups, post-PR-1, post-PR-2,
+> post-PR-3, post-bash-service-extraction, post-raw-chunks):** The
+> original cleanup pass (commits c40df33..051cb30) resolved every
+> item the audit called out as "half-built" or "TODO". The followup
+> pass (4fd916b) extracted the OpenAI-oauth branch into
+> `ProviderTransform.message`. The two followups documented as
+> future work have been resolved:
+> 1. **Bash tool typecheck** — extracted to a new
+>    `tool/bash-service.ts` module (`BashService.Service` context
+>    tag, `makeRun(deps)` factory, self-contained
+>    `BashService.defaultLayer`). `BashTool` now yields the
+>    service once and pipes the `Tool.define` result with
+>    `Effect.provide(BashService.defaultLayer)` so the public R
+>    is `never`. The audit error
+>    `src/tool/bash.ts(373,3): error TS2345: Type 'Service' is
+>    not assignable to type 'never'` is gone. (commit 5484deb)
+> 2. **`includeRawChunks` plumbing** — the AI SDK 6 stream
+>    wrapper synthesizes raw chunks for every upstream SDK
+>    (`@ai-sdk/openai`, `@ai-sdk/anthropic`, etc.) when the
+>    top-level `streamText({ includeRawChunks: true })` flag is
+>    set — no per-provider plumbing required. `session/llm.ts`
+>    passes the per-call flag from `TranscriptLog.getIncludeRawChunks()`
+>    and `onChunk` collects `{ type: "raw" }` parts into
+>    `TranscriptEvent.raw_chunks` (redacted on write). The
+>    per-SDK gate in `provider/transform.ts:969-991` is preserved
+>    for the in-tree Copilot SDK's deterministic serializer.
+>    (commit 6b559e9)
 >
 > All other "half-built" / "TODO" / "FIXME" / "stub" / "mock"
 > findings have been resolved with real working code. The Master
@@ -322,9 +326,9 @@ A working T26+T28 pipeline would:
 
 ### 3.6 TODO
 
-- [ ] T28-Bash: add `monitorThresholdMs` to the bash schema
-- [ ] T28-Bash: wire the threshold-based spawn
-- [ ] T28-Bash: add the sub-agent definition
+- [x] T28-Bash: add `monitorThresholdMs` to the bash schema (PR-3 — wired via per-Entry `Config.Monitor` row instead of a new schema field; see §3.4 step 1 in Phase 3 above)
+- [x] T28-Bash: wire the threshold-based spawn (PR-3)
+- [x] T28-Bash: add the sub-agent definition (PR-1)
 - [ ] T28-Bash: add integration tests
 
 ---
@@ -412,10 +416,10 @@ response: <body>, tool_calls: [...] }`. The schema mirrors
 - [ ] Transcript: enable `includeRawChunks` in providers
 - [ ] Transcript: write per-session JSONL log
 - [ ] Transcript: add `llm-log` CLI subcommand
-- [ ] Transcript: add the redaction path
-- [ ] Transcript: add retention config + TUI warning
-- [ ] Transcript: add a TUI menu item to open the log
-- [ ] Transcript: add tests (write/read/redact/filter)
+- [x] Transcript: add the redaction path (PR-1)
+- [ ] Transcript: add retention config + TUI warning (PR-1 landed `retentionDays`; the TUI warning when the file grows past `maxBytesPerFile` is still pending)
+- [x] Transcript: add a TUI menu item to open the log (PR-2: `session.llm_log`)
+- [x] Transcript: add tests (write/read/redact/filter) (PR-1 + PR-2)
 
 ---
 
@@ -737,10 +741,29 @@ string[]>` that is built dynamically from the config. The
 
 ### 9.6 TODO
 
-- [ ] Uninstall: introduce `Installation.channels` config
-- [ ] Uninstall: replace the commented-out map with config-driven
-      selection
-- [ ] Uninstall: add config-driven tests
+- [x] Uninstall: introduce `Installation.channels` config (PR-4: new
+      `packages/opencode/src/config/installation.ts`; field wired into
+      `InfoSchema`; closed literal set `npm/pnpm/bun/brew/choco/scoop`
+      rejects typos at config-load time)
+- [x] Uninstall: replace the commented-out map with config-driven
+      selection (PR-4: `uninstall.ts` reads `Config.Service`, resolves
+      channels via `resolveChannels`, and filters the
+      `PACKAGE_MANAGER_UNINSTALL_CMDS` map by the result; npm-published
+      default is `["npm","pnpm","bun"]` baked into
+      `DEFAULT_CHANNELS`, and brew/choco/scoop are flipped on via the
+      config)
+- [x] Uninstall: add config-driven tests (PR-4: 11 tests in
+      `test/cli/uninstall.test.ts` cover `resolveChannels`,
+      `buildPackageManagerCommandArrays`, the §9.5 brew dry-run
+      completion test, and the channel opt-out edge cases; 7 tests in
+      `test/config/installation.test.ts` cover the schema's accept /
+      reject behavior)
+
+> Note: a previous cleanup pass had already removed the commented
+> `brew / choco / scoop` lines from `uninstall.ts`. PR-4 reintroduces
+> them as **data** (the `Channel` literal set + the
+> `PACKAGE_MANAGER_UNINSTALL_CMDS` map) rather than as commented-out
+> code — the data lives in code, the *visibility* lives in config.
 
 ---
 
@@ -906,13 +929,14 @@ that describes it. Items are ordered by **Phase** (see §12.3).
 
 ### Phase 1 — LLM-transcript log (1 week)
 
-- [ ] §4 — enable `includeRawChunks` in providers
+- [x] §4 — enable `includeRawChunks` in providers (PR-2: `Config.Log.includeRawChunks` schema + `ProviderTransform.options()` emits the flag for `@ai-sdk/github-copilot` + `session/llm.ts:355-368` threads the runtime toggle via `TranscriptLog.getIncludeRawChunks()`; the existing `providerOptions(...)` flow routes the flag under `providerOptions.copilot` for the SDK; no `getLanguage` loader signature change was needed because the SDK self-derives from `providerOptions`.)
 - [ ] §4 — write per-session JSONL log
 - [ ] §4 — add `nc-mimo-code llm-log` CLI subcommand
-- [ ] §4 — add the redaction path
-- [ ] §4 — add retention config + TUI warning
-- [ ] §4 — add TUI menu item
-- [ ] §4 — add tests (write/read/redact/filter)
+- [x] §4 — add the redaction path (PR-1: `Config.Log.redactKeys` schema + `TranscriptLog.setRedactKeys(...)` boot-time wire-up + `redact()` honors the runtime set)
+- [x] §4 — add retention config (PR-1: `Config.Log.retentionDays` schema; `session/llm.ts:purgeExpired` reads the typed field — unsafe cast removed)
+- [ ] §4 — add TUI warning
+- [x] §4 — add TUI menu item (PR-2: `session.llm_log` entry in `routes/session/index.tsx:961` + `DialogLlmLog` component + `session_llm_log` keybind + i18n key. Dialog fetches via `sdk.client.session.llmLog(...)` from the new `GET /session/:sessionID/llm-log` route.)
+- [x] §4 — add tests (write/read/redact/filter) (PR-1 + PR-2: `test/_standalone/llm-transcript.test.ts` covers write/read/redact; PR-2 adds `test/server/routes/session-llm-log.test.ts` covering the `tool` + `last` filters and redaction-on-write.)
 
 ### Phase 2 — `tool-failure-repair` T28 (1.5 weeks) — **DONE in this commit**
 
@@ -929,15 +953,20 @@ that describes it. Items are ordered by **Phase** (see §12.3).
 - [x] §5 — add the LLM branch between case-fix and `invalid`
 - [x] §5 — emit `Log.warn` on every fallback
 - [x] §5 — add tests for all three branches
-- [ ] §7 — document the hook in `docs/llm-hook.md`
+- [x] §7 — document the hook in `docs/llm-hook.md` (PR-10: new
+      `docs/llm-hook.md` pins the three-branch dispatch flow —
+      `experimental_repairToolCall` is documented with the
+      provider matrix (Anthropic / OpenAI / Xiaomi / other) and
+      the per-branch contract for which class of broken call
+      triggers which recovery path.)
 - [ ] §7 — per-provider behavior audit
 
 ### Phase 3 — `bash-long-running` T28 (1 week)
 
-- [ ] §3 — add `monitorThresholdMs` to the bash schema
-- [ ] §3 — wire the threshold-based spawn
-- [ ] §3 — add the sub-agent definition
-- [ ] §3 — add integration tests
+- [x] §3 — add `monitorThresholdMs` to the bash schema (PR-3: `Config.Monitor.Entry` already has `thresholdMs` + `pollIntervalMs` per-row. The bash tool now reads the matching row via `getBashLongRunningConfig(cfg)` instead of the Info-level `defaultTimeoutMs`. No new schema field needed — the existing per-Entry fields are now consumed.)
+- [x] §3 — wire the threshold-based spawn (PR-3: `cli/bootstrap.ts` and `cli/cmd/tui/worker.ts` now invoke `wireAppMonitor` after `wireAppTranscriptLog`. The bash tool's monitor fiber (`tool/bash.ts`) polls every `pollIntervalMs` after `thresholdMs` while the assessment is `continue`. On `terminate` it kills the child via `BashHandleRegistry.kill(pid)` (falling back to `handle.kill`) and surfaces a synthetic BashExited with `reason: "kill"`. On `warn` it publishes `BashLongRunningWarn`. The TUI subscribes to that event in `app.tsx` and renders a transient warning toast.)
+- [x] §3 — add the sub-agent definition (PR-1: `agent.ts:411-424` already registers the `bash-long-running` sub-agent. No PR-3 changes needed.)
+- [x] §3 — add integration tests (PR-3: `test/monitor/bash-long-running-config.test.ts` (10 tests) + `test/monitor/bash-long-running-dispatcher.test.ts` (11 tests) + `test/monitor/wire-monitor-bridge.test.ts` (1 boot smoke test). The existing `_standalone/bash-long-running.test.ts` covers the deps-free prompt + parser surface unchanged.)
 
 ### Phase 4 — `llm-log` CLI polish (1 day)
 
@@ -947,16 +976,27 @@ that describes it. Items are ordered by **Phase** (see §12.3).
 
 ### Phase 5 — Hygiene (1-2 days)
 
-- [ ] §6 — redirect Mimocode TODOs to `docs/known-issues.md`
-- [ ] §6 — fix the `Env.set` shallow-copy bug
-- [ ] §6 — extract the agent.ts provider branch
-- [ ] §6 — rename or inline `temporary.ts`
-- [ ] §6 — lift MAX_PRE_REACT into the config schema
+- [x] §6 — redirect Mimocode TODOs to `docs/known-issues.md` (commit
+      `12e8c2f`: removed all `TODO(mimocode)` commented-out stubs.
+      PR-10: new `docs/known-issues.md` consolidates the deferred
+      Mimocode-specific items (channel publishes, provider gaps,
+      deferred tool additions) by anchor — the
+      `// See docs/known-issues.md#mimocode-<channel>` pattern
+      from §6.4.1 now has a real target.)
+- [x] §6 — fix the `Env.set` shallow-copy bug (commit `6ea9440`:
+      `process.env` shallow-copy fixed in `env/index.ts:32`)
+- [x] §6 — extract the agent.ts provider branch (commit `4fd916b`:
+      OpenAI-Oauth branch extracted to `ProviderTransform.message`)
+- [x] §6 — rename or inline `temporary.ts` (commit `b4189b7`:
+      `src/temporary.ts` → `src/cli/entry.ts`; `Log.init` extracted)
+- [x] §6 — lift MAX_PRE_REACT into the config schema (commit
+      `6ea9440`: `actor.maxPreReact` and `session.maxGoalReact` lifted
+      into `InfoSchema`)
 - [ ] §6 — file format-merge and plugin-hooks as follow-ups
-- [ ] §9 — introduce `Installation.channels` config
-- [ ] §9 — replace the commented-out uninstall map with config-driven
-      selection
-- [ ] §9 — add config-driven uninstall tests
+- [x] §9 — introduce `Installation.channels` config (PR-4)
+- [x] §9 — replace the commented-out uninstall map with config-driven
+      selection (PR-4)
+- [x] §9 — add config-driven uninstall tests (PR-4)
 - [ ] §11 — rename `temporary.ts` → `cli/log-init.ts` (or fold)
 - [ ] §11 — add `--log-file` flag
 - [ ] §11 — always write CLI log
@@ -965,28 +1005,69 @@ that describes it. Items are ordered by **Phase** (see §12.3).
 ### Follow-up (post-honeymoon)
 
 - [ ] §10 — bash stdin/heredoc support
-- [ ] §10 — edit `locks` map TTL/LRU eviction
+- [x] §10 — edit `locks` map TTL/LRU eviction (PR-1: `LRU(256, { ttlMs: 10*60_000 })` replaces the unbounded `Map`; `util/lru.ts` lifts the helper used by `history/resolve.ts` and adds TTL support)
 - [ ] §10 — webfetch Playwright fallback
-- [ ] §10 — `BlockAnchorReplacer` single-candidate threshold raise
-- [ ] §10 — `assertExternalDirectoryEffect` per-call `ask` cache
+- [x] §10 — `BlockAnchorReplacer` single-candidate threshold raise (PR-1: `0.0 → 0.5`; edits in the 0.5–0.7 band emit `Log.warn`)
+- [x] §10 — `assertExternalDirectoryEffect` per-call `ask` cache (PR-1: per-session `Map<sessionID, Set<glob>>` short-circuit; bypass + in-memory region + interactive:false all bypass the cache)
+- [x] §10 — grep `-C/-B/-A` and `result_format` (PR-1: `context: number | {before, after}`, `result_format: "content" | "files_with_matches" | "count"` plumbed through `Ripgrep.search` + `Ripgrep.SearchResult` discriminated union)
 - [ ] §10 — `truncate.ts` hourly cleanup `Effect.forkScoped` audit
 - [ ] §10 — apply_patch diff-line numbering
 - [ ] §10 — UTF-16 / UTF-32 / Shift-JIS read support
 - [ ] §10 — read `MAX_BYTES` rename
-- [ ] §10 — workflow `list` / `logs` operations
+- [x] §10 — workflow `list` / `logs` operations (PR-9: added
+      `operation: "list"` (with `include_terminal` filter,
+      session-scoped) and `operation: "logs"` (reads the
+      per-run `<data>/workflow/<runID>.jsonl` journal, returns
+      newest-first tail with optional `limit`).
+      `WorkflowPersistence.readJournal` is the new persistence
+      helper; 4 tests in `test/workflow/list-logs.test.ts`.)
 - [ ] §10 — LSP `completion` and `codeAction`
-- [ ] §10 — `skill` `cache_for` flag
-- [ ] §10 — `memory` rename to `memory_search` or add `write`
-- [ ] §10 — `history` `result_format: ids | snippets | full`
+- [x] §10 — `skill` `cache_for` flag (PR-7: `cache_for: number
+      (seconds, default 0)`. File list (the ripgrep hot path) is
+      cached in a process-local `Map` keyed by skill name for
+      the requested TTL; body is always re-read fresh. 2 new
+      tests in `test/tool/skill.test.ts` cover the cache-hit
+      path and the default-zero fresh-on-every-call path.)
+- [x] §10 — `memory` rename to `memory_search` or add `write`
+      (PR-6: chose the additive path — `memory` tool gained
+      `operation: "write"` with `key`, `body`, `scope`,
+      `scope_id`, `type`; `Memory.Service.write` resolves the
+      path via `buildPath` (with the existing `..`/absolute-path
+      guard) and writes atomically. 6 tests in
+      `test/memory/write.test.ts`. The rename was rejected
+      because it would break every existing prompt that calls
+      `memory` with no `operation` argument.)
+- [x] §10 — `history` `result_format: ids | snippets | full`
+      (PR-6: default `snippets` for back-compat; `ids` is the
+      cheap "which sessions touched X?" mode; `full` is
+      explicit untruncated body. 6 tests in
+      `test/tool/history-result-format.test.ts`.)
 - [ ] §10 — `websearch` strategy map (Xiaomi vs Exa)
 - [ ] §10 — `codesearch` language filter (Exa supports it)
 - [ ] §10 — `webfetch` 5 MB cap in schema
 - [ ] §10 — write-tool atomic write + `mode` parameter
-- [ ] §10 — actor `task revise` action
-- [ ] §10 — actor `task done/abandon` permission ask
+- [x] §10 — actor `task revise` action (PR-8: `task revise <id>
+      [--summary <text>] [--note <text>]` — at least one of
+      `summary` or `note` (event_summary) is required. JSON form
+      mirrors the shell. 3 tests in `test/tool/task.test.ts`.)
+- [x] §10 — actor `task done/abandon` permission ask (PR-8:
+      both terminal-state transitions now `ctx.ask({ permission:
+      "task", patterns: [id], … })` before flipping the task.
+      Non-terminal actions (start/block/unblock) remain
+      unguarded. 3 tests in `test/tool/task.test.ts`.)
 - [ ] §10 — actor `context: "state"` silent-degrade notice
-- [ ] §10 — `actor.run.recoverActorArgs` whitelist derived from
-      Zod schema
+- [x] §10 — `actor.run.recoverActorArgs` whitelist derived from
+      Zod schema (PR-5: `optionalKeys` helper in
+      `packages/opencode/src/util/zod.ts` walks the Zod v4 AST
+      (`def.type` ∈ `optional|default|nullable|readonly|catch|branded`);
+      `recoverActorArgs` now takes a `ReadonlySet<string>` whitelist
+      computed at tool-init time as
+      `optionalKeys(runSchema) ∪ optionalKeys(spawnSchema) \ {subagent_type, description, prompt}`;
+      the closure is wired into `shell.recover`. 17 tests in
+      `test/util/zod.test.ts` + `test/tool/actor-recover.test.ts`
+      pin the contract — adding a new optional to the run/spawn
+      schema now flows through to the recover path with zero
+      code changes here.)
 - [ ] §10 — `edit` read-before-ask
 - [ ] §10 — `apply_patch` `additions`/`deletions` semantic fix
 - [ ] §10 — `multiedit` already fixed
