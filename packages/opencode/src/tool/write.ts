@@ -30,12 +30,27 @@ export const WriteTool = Tool.define(
       parameters: z.object({
         content: z.string().describe("The content to write to the file"),
         filePath: z.string().describe("The absolute path to the file to write (must be absolute, not relative)"),
+        // PR-6 write tool hardening: explicit mode for scripts vs data
+        // files. When omitted, the tool preserves the executable bit
+        // of the pre-existing file (or defaults to 0o644 for new
+        // files). `"executable"` sets 0o755 (scripts); `"file"` sets
+        // 0o644 (data files / config). On non-POSIX platforms the
+        // chmod call is a no-op (the AppFileSystem layer ignores it).
+        mode: z
+          .enum(["file", "executable"])
+          .optional()
+          .describe(
+            "Explicit file mode. 'executable' for scripts (0o755), 'file' for data (0o644). When omitted, the existing file's executable bit is preserved (or 0o644 for new files).",
+          ),
       }),
       formatValidationError: Tool.formatZodError({
         content: { type: "string", required: true },
         filePath: { type: "string (absolute path, not relative)", required: true },
       }),
-      execute: (params: { content: string; filePath: string }, ctx: Tool.Context) =>
+      execute: (
+        params: { content: string; filePath: string; mode?: "file" | "executable" },
+        ctx: Tool.Context,
+      ) =>
         Effect.gen(function* () {
           const filepath = path.isAbsolute(params.filePath)
             ? params.filePath
@@ -51,7 +66,21 @@ export const WriteTool = Tool.define(
             diff,
           })
 
-          yield* fs.writeWithDirs(filepath, params.content)
+          // Resolve the target mode. Explicit `mode` param wins;
+          // otherwise preserve the existing file's executable bit
+          // (or 0o644 default for new files).
+          let modeOctal: number | undefined
+          if (params.mode === "executable") modeOctal = 0o755
+          else if (params.mode === "file") modeOctal = 0o644
+          else if (exists) {
+            const stat = yield* fs.stat(filepath)
+            const currentMode = stat.mode ?? 0
+            modeOctal = (currentMode & 0o111) !== 0 ? 0o755 : 0o644
+          } else {
+            modeOctal = 0o644
+          }
+
+          yield* fs.writeAtomicWithDirs(filepath, params.content, modeOctal)
           yield* format.file(filepath)
           yield* bus.publish(File.Event.Edited, { file: filepath })
           yield* bus.publish(FileWatcher.Event.Updated, {
