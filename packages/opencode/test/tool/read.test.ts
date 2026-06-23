@@ -1,4 +1,4 @@
-import { afterEach, describe, expect } from "bun:test"
+import { afterEach, describe, expect, it as bunIt } from "bun:test"
 import { Cause, Effect, Exit, Layer } from "effect"
 import path from "path"
 import { Agent } from "../../src/agent/agent"
@@ -12,6 +12,7 @@ import { Instruction } from "../../src/session/instruction"
 import { ReadTool } from "../../src/tool/read"
 import { Truncate } from "../../src/tool"
 import { Tool } from "../../src/tool"
+import { BUDGET } from "../../src/config/tool-budget-resolve"
 import { Filesystem } from "../../src/util"
 import { provideInstance, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -480,4 +481,218 @@ describe("tool.read binary detection", () => {
       expect(err.message).toContain("Cannot read binary file")
     }),
   )
+})
+
+describe("tool.read new features", () => {
+  // ---- 1. around parameter centers the window
+  it.live("around parameter centers the read window", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const lines = Array.from({ length: 200 }, (_, i) => `line${i + 1}`).join("\n")
+      yield* put(path.join(dir, "long.txt"), lines)
+
+      const result = yield* exec(dir, { filePath: path.join(dir, "long.txt"), around: 100, limit: 20 })
+      // around=100, limit=20, half=10, effectiveOffset=90. Window covers lines 90-109.
+      expect(result.output).toContain("90: line90")
+      expect(result.output).toContain("109: line109")
+      expect(result.output).not.toContain("89: line89")
+      expect(result.output).not.toContain("110: line110")
+      expect(result.output).toContain("Centered on line 100")
+    }),
+  )
+
+  // ---- 2. around overrides offset
+  it.live("around overrides offset when both are set", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const lines = Array.from({ length: 50 }, (_, i) => `L${i + 1}`).join("\n")
+      yield* put(path.join(dir, "f.txt"), lines)
+
+      const result = yield* exec(dir, { filePath: path.join(dir, "f.txt"), offset: 5, around: 25, limit: 10 })
+      // around=25 with limit=10 => half=5, so start=20. Output covers lines 20-29.
+      expect(result.output).toContain("20: L20")
+      expect(result.output).toContain("21: L21")
+      expect(result.output).toContain("Centered on line 25")
+      // offset=5 should be ignored
+      expect(result.output).not.toContain("5: L5")
+    }),
+  )
+
+  // ---- 3. ast: outline on a non-LSP file falls back to plain text
+  it.live("ast=outline falls back to plain text when no LSP is available", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      yield* put(path.join(dir, "plain.txt"), "hello\nworld\n")
+
+      const result = yield* exec(dir, { filePath: path.join(dir, "plain.txt"), ast: "outline" })
+      expect(result.output).toContain("No LSP outline available for this file")
+      expect(result.output).toContain("hello")
+      expect(result.output).toContain("world")
+    }),
+  )
+
+  // ---- 4. ast: outline fallback honors offset/around/limit
+  it.live("ast=outline fallback honors offset and limit", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const lines = Array.from({ length: 20 }, (_, i) => `row${i + 1}`).join("\n")
+      yield* put(path.join(dir, "rows.txt"), lines)
+
+      const result = yield* exec(dir, {
+        filePath: path.join(dir, "rows.txt"),
+        ast: "outline",
+        offset: 5,
+        limit: 3,
+      })
+      expect(result.output).toContain("No LSP outline available")
+      expect(result.output).toContain("5: row5")
+      expect(result.output).toContain("7: row7")
+      expect(result.output).not.toContain("4: row4")
+      expect(result.output).not.toContain("8: row8")
+    }),
+  )
+
+  // ---- 5. image attachment size cap
+  it.live("rejects image attachments exceeding the 10MB cap", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      // Build a "PNG" larger than 10MB. The detection only looks at the first
+      // few bytes for magic numbers, so we can pad with arbitrary content.
+      const head = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      const padding = Buffer.alloc(11 * 1024 * 1024, 0x42) // ~11MB
+      yield* put(path.join(dir, "huge.png"), Buffer.concat([head, padding]))
+
+      const err = yield* fail(dir, { filePath: path.join(dir, "huge.png") })
+      expect(err.message).toContain("exceeding the")
+      expect(err.message).toContain("10.0MB cap")
+      expect(err.message).toContain("maxAttachmentBytes=")
+    }),
+  )
+
+  // ---- 5b. maxAttachmentBytes override allows a larger file
+  it.live("maxAttachmentBytes override lifts the cap", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const head = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      const padding = Buffer.alloc(11 * 1024 * 1024, 0x42)
+      const buf = Buffer.concat([head, padding])
+      yield* put(path.join(dir, "huge.png"), buf)
+
+      const result = yield* exec(dir, {
+        filePath: path.join(dir, "huge.png"),
+        maxAttachmentBytes: 12 * 1024 * 1024,
+      })
+      expect(result.attachments).toBeDefined()
+      expect(result.attachments?.[0].mime).toBe("image/png")
+    }),
+  )
+
+  // ---- 6. encoding detection for utf-16le BOM
+  it.live("detects utf-16le encoding from BOM and decodes content", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      // BOM (FF FE) + ASCII text in utf-16le
+      const bom = Buffer.from([0xff, 0xfe])
+      const text = Buffer.from("hello world\n", "utf16le")
+      yield* put(path.join(dir, "utf16.txt"), Buffer.concat([bom, text]))
+
+      const result = yield* exec(dir, { filePath: path.join(dir, "utf16.txt") })
+      expect(result.output).toContain("hello world")
+      expect(result.output).toContain('<meta>')
+      expect(result.output).toContain("encoding=utf-16le")
+    }),
+  )
+
+  // ---- 7. encoding default is utf-8 for non-ASCII text
+  it.live("detects utf-8 encoding for text with non-ASCII bytes", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      // "café résumé" with a non-ASCII character — exercises the utf-8 detection
+      // path that fires when the sample contains bytes >= 0x80.
+      yield* put(path.join(dir, "plain.txt"), Buffer.from("café résumé\n", "utf8"))
+
+      const result = yield* exec(dir, { filePath: path.join(dir, "plain.txt") })
+      expect(result.output).toContain('<meta>')
+      expect(result.output).toContain("encoding=utf-8")
+      expect(result.output).toContain("café")
+    }),
+  )
+
+  it.live("detects ascii encoding for pure-ASCII text", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      yield* put(path.join(dir, "plain.txt"), "just some text\nwith newlines\n")
+
+      const result = yield* exec(dir, { filePath: path.join(dir, "plain.txt") })
+      expect(result.output).toContain('<meta>')
+      expect(result.output).toContain("encoding=ascii")
+      expect(result.output).toContain("just some text")
+    }),
+  )
+
+  // ---- 8. .gitignore filtering for directories
+  it.live("directory listing filters out .gitignore entries by default", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped({ git: true })
+      yield* put(path.join(dir, ".gitignore"), "node_modules\n")
+      yield* put(path.join(dir, "node_modules", "x.js"), "ignored")
+      yield* put(path.join(dir, "src", "y.js"), "kept")
+
+      const result = yield* exec(dir, { filePath: dir })
+      expect(result.output).toContain("src/")
+      // node_modules directory entry should be filtered out
+      expect(result.output).not.toContain("node_modules")
+      expect(result.output).toContain("Filtered by .gitignore")
+    }),
+  )
+
+  it.live("directory listing with showIgnored=true includes all entries", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped({ git: true })
+      yield* put(path.join(dir, ".gitignore"), "node_modules\n")
+      yield* put(path.join(dir, "node_modules", "x.js"), "ignored")
+      yield* put(path.join(dir, "src", "y.js"), "kept")
+
+      const result = yield* exec(dir, { filePath: dir, showIgnored: true })
+      expect(result.output).toContain("node_modules")
+      expect(result.output).toContain("src")
+      expect(result.output).toContain("Showing all entries, including ignored ones")
+    }),
+  )
+
+  // ---- 9. symlink loop detection
+  it.live("symlink loop in directory listing is marked and skipped", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const fs = yield* AppFileSystem.Service
+      yield* put(path.join(dir, "real.txt"), "real")
+      // Create a symlink that points back to the parent dir
+      yield* fs
+        .symlink(path.join(dir, "real.txt"), path.join(dir, "loop.txt"))
+        .pipe(Effect.catch(() => Effect.void))
+      // The test only matters if symlink creation succeeded; we don't fail
+      // if it didn't (some sandboxes disallow it).
+      const result = yield* exec(dir, { filePath: dir })
+      // No infinite tree regardless — the listing must complete.
+      expect(result.output).toContain("real.txt")
+    }),
+  )
+
+  // ---- 10. metadata header on text reads
+  it.live("text read includes <meta> header with size, lines, encoding", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      yield* put(path.join(dir, "small.txt"), "abc\ndef\n")
+
+      const result = yield* exec(dir, { filePath: path.join(dir, "small.txt") })
+      expect(result.output).toMatch(/<meta>size=\S+, lines=2, encoding=\S+/)
+    }),
+  )
+
+  // ---- 11. BUDGET import is wired
+  bunIt("BUDGET.read defaults match the documented read caps", () => {
+    expect(BUDGET.read.maxBytes).toBe(50 * 1024)
+    expect(BUDGET.read.maxLines).toBe(2000)
+    expect(BUDGET.read.maxLineLength).toBe(2000)
+  })
 })

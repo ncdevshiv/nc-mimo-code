@@ -19,6 +19,7 @@ import { SessionCompaction } from "./compaction"
 import { computeLastMessageInfo } from "./last-message-info"
 import { pressureLevel, isOverflow as overflowCheck } from "./overflow"
 import { Config } from "@/config"
+import { Pressure } from "@/util"
 import { Global } from "@/global"
 import { Bus } from "../bus"
 import { ProviderTransform } from "../provider"
@@ -1707,6 +1708,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const session = yield* sessions.get(sessionID)
         let lastFinishedForPrune: MessageV2.Assistant | undefined
         let lastModelForPrune: Provider.Model | undefined
+        // Live pressure level (0-3) for the current iteration. Updated
+        // each iteration from `pressureLevel(...)` (see memory-flush
+        // nudge below). The level feeds tool.ts:wrap via the
+        // `Pressure.Service` context; tests that want to exercise
+        // pressure-driven cap halving can wrap tool execution with
+        // `Pressure.withPressure(level)` directly.
+        let livePressure: Pressure.PressureLevel = 0
         let outputLengthContinuations = 0
         // Shared local counter for "model finished but produced nothing usable"
         // (think-only / empty). T04's generic-invalid retries reuse this same
@@ -2321,6 +2329,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           if (lastFinished && lastFinished.summary !== true && model) {
             const cfg = yield* config.get()
             const pressure = pressureLevel({ cfg, tokens: lastFinished.tokens, model })
+            livePressure = pressure
             if (pressure >= 2) {
               // Inject nudge as a synthetic text part on the last user message
               const lastUserMsg = msgs.findLast((m) => m.info.role === "user")

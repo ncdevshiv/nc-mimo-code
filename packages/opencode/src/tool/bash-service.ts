@@ -41,8 +41,9 @@ import { killBashHandle, registerBashHandle, unregisterBashHandle } from "./bash
 import * as Truncate from "./truncate"
 import * as Tool from "./tool"
 import { Log } from "@/util"
+import { BUDGET } from "@/config/tool-budget-resolve"
 
-const MAX_METADATA_LENGTH = 30_000
+const MAX_METADATA_LENGTH = BUDGET.bash.maxMetadataLength
 const PS = new Set(["powershell", "pwsh"])
 const CWD = new Set(["cd", "push-location", "set-location"])
 const FILES = new Set([
@@ -67,9 +68,10 @@ const FILES = new Set([
 const FLAGS = new Set(["-destination", "-literalpath", "-path"])
 const SWITCHES = new Set(["-confirm", "-debug", "-force", "-nonewline", "-recurse", "-verbose", "-whatif"])
 
-const ERROR_PATTERN = /error|exception|failed|fatal|traceback|panic|exit code/i
-const HEAD_BYTES = Math.floor(Truncate.MAX_BYTES * 0.7)
-const HEAD_LINES = Math.floor(Truncate.MAX_LINES * 0.7)
+const ERROR_PATTERN = Truncate.ERROR_PATTERN
+const TAIL_SCAN_CHARS = Truncate.TAIL_SCAN_CHARS
+const HEAD_BYTES = Math.floor(BUDGET.bash.maxBytes * 0.7)
+const HEAD_LINES = Math.floor(BUDGET.bash.maxLines * 0.7)
 
 const log = Log.create({ service: "bash-tool" })
 
@@ -259,42 +261,11 @@ function preview(text: string) {
 }
 
 function head(text: string, maxLines: number, maxBytes: number): string {
-  const lines = text.split("\n")
-  const out: string[] = []
-  let bytes = 0
-  for (let i = 0; i < lines.length && out.length < maxLines; i++) {
-    const size = Buffer.byteLength(lines[i], "utf-8") + (i > 0 ? 1 : 0)
-    if (bytes + size > maxBytes) break
-    out.push(lines[i])
-    bytes += size
-  }
-  return out.join("\n")
+  return Truncate.selectHead(text, maxLines, maxBytes).content
 }
 
 function tail(text: string, maxLines: number, maxBytes: number) {
-  const lines = text.split("\n")
-  if (lines.length <= maxLines && Buffer.byteLength(text, "utf-8") <= maxBytes) {
-    return { text, cut: false }
-  }
-
-  const out: string[] = []
-  let bytes = 0
-  for (let i = lines.length - 1; i >= 0 && out.length < maxLines; i--) {
-    const size = Buffer.byteLength(lines[i], "utf-8") + (out.length > 0 ? 1 : 0)
-    if (bytes + size > maxBytes) {
-      if (out.length === 0) {
-        const buf = Buffer.from(lines[i], "utf-8")
-        let start = buf.length - maxBytes
-        if (start < 0) start = 0
-        while (start < buf.length && (buf[start] & 0xc0) === 0x80) start++
-        out.unshift(buf.subarray(start).toString("utf-8"))
-      }
-      break
-    }
-    out.unshift(lines[i])
-    bytes += size
-  }
-  return { text: out.join("\n"), cut: true }
+  return Truncate.selectTail(text, maxLines, maxBytes)
 }
 
 function cmd(shell: string, name: string, command: string, cwd: string, env: NodeJS.ProcessEnv) {
@@ -630,11 +601,11 @@ export const makeRun = (deps: BashDeps): BashInterface => {
           file = yield* trunc.write(raw, "bash")
         }
 
-        let output = end.text
+        let output = end.content
         if (!output) output = "(no output)"
 
         if (cut && file) {
-          const tailScan = end.text.length > 2048 ? end.text.slice(-2048) : end.text
+          const tailScan = end.content.length > TAIL_SCAN_CHARS ? end.content.slice(-TAIL_SCAN_CHARS) : end.content
           const hasErrors = ERROR_PATTERN.test(tailScan)
           if (hasErrors) {
             let fileContent: string | undefined
@@ -644,8 +615,19 @@ export const makeRun = (deps: BashDeps): BashInterface => {
               fileContent = undefined
             }
             if (fileContent) {
-              const headText = head(fileContent, HEAD_LINES, HEAD_BYTES)
-              output = `...output truncated (head+tail shown due to errors)...\n\nFull output saved to: ${file}\n\n${headText}\n\n...middle omitted...\n\n${end.text}`
+              // Reuse the central 70/30 helper so the math stays in
+              // sync with the tool-output truncator. The total budget
+              // for the head half is HEAD_BYTES / HEAD_LINES, computed
+              // from `BUDGET.bash.*`.
+              const split = Truncate.selectHeadTailWithErrors(
+                fileContent,
+                HEAD_LINES,
+                HEAD_BYTES,
+                ERROR_PATTERN,
+                TAIL_SCAN_CHARS,
+              )
+              const headText = split.applied ? split.head : head(fileContent, HEAD_LINES, HEAD_BYTES)
+              output = `...output truncated (head+tail shown due to errors)...\n\nFull output saved to: ${file}\n\n${headText}\n\n...middle omitted...\n\n${end.content}`
             } else {
               output = `...output truncated...\n\nFull output saved to: ${file}\n\n` + output
             }

@@ -69,6 +69,14 @@ export const Flag = {
   // bounds the decoded byte size of a single image. Values must be positive integers.
   NC_MIMO_CODE_MAX_PROMPT_IMAGES: number("NC_MIMO_CODE_MAX_PROMPT_IMAGES"),
   NC_MIMO_CODE_MAX_PROMPT_IMAGE_SIZE: number("NC_MIMO_CODE_MAX_PROMPT_IMAGE_SIZE"),
+
+  // Uniform byte-cap multiplier applied across every tool that returns
+  // a large string (read, grep, bash, webfetch, history.around, etc.).
+  // Per-tool overrides from `toolBudget.<tool>.maxBytes` in opencode.json
+  // take precedence and are NOT multiplied. Result-count and line-count
+  // caps are unaffected — the multiplier only scales byte fields.
+  // Example: NC_MIMO_CODE_TOOL_OUTPUT_BUDGET=8 → all byte caps 8× larger.
+  NC_MIMO_CODE_TOOL_OUTPUT_BUDGET: number("NC_MIMO_CODE_TOOL_OUTPUT_BUDGET"),
   NC_MIMO_CODE_MIMO_ONLY,
   NC_MIMO_CODE_DISABLE_PROVIDER_ENV: NC_MIMO_CODE_MIMO_ONLY || truthy("NC_MIMO_CODE_DISABLE_PROVIDER_ENV"),
   NC_MIMO_CODE_DISABLE_CLAUDE_CODE,

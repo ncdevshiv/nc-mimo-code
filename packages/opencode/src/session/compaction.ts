@@ -265,7 +265,20 @@ export const layer: Layer.Layer<
         }
       }
 
-      const agent = yield* agents.get("compaction")
+      // Try the `compaction` agent first, then fall back to the parent
+// agent (the agent that owns this compaction request). Throws with
+// a clear error if neither is available — silently degrading to
+// "no compaction" was the previous behavior and produced empty
+// context downstream.
+const compactionAgent = yield* agents.get("compaction").pipe(Effect.option)
+const agent =
+  compactionAgent._tag === "Some"
+    ? compactionAgent.value
+    : input.agentID
+      ? yield* agents
+          .get(input.agentID)
+          .pipe(Effect.catch(() => agents.get("build")))
+      : yield* agents.get("build")
       const model = agent.model
         ? yield* provider.getModel(agent.model.providerID, agent.model.modelID)
         : yield* provider.getModel(userMessage.model.providerID, userMessage.model.modelID)
@@ -366,6 +379,28 @@ export const layer: Layer.Layer<
             ? "Conversation history too large to compact - exceeds model context limit"
             : "Session too large to compact - context exceeds model limit even after stripping media",
         }).toObject()
+        processor.message.finish = "error"
+        yield* session.updateMessage(processor.message)
+        return "stop"
+      }
+
+// Validate the LLM-generated summary before persisting it.
+// Empty or near-empty summaries used to silently degrade the
+// session — every subsequent turn saw a blank context window.
+      const allMessages = yield* session
+        .messages({ sessionID: input.sessionID })
+        .pipe(Effect.catch(() => Effect.succeed([] as MessageV2.WithParts[])))
+      const ownMsg = allMessages.find((m) => m.info.id === processor.message.id)
+      const summaryText = (ownMsg?.parts ?? [])
+        .filter((p): p is MessageV2.TextPart => p.type === "text")
+        .map((p) => p.text ?? "")
+        .join("\n")
+        .trim()
+      if (summaryText.length < 32) {
+        const detail =
+          summaryText.length === 0 ? "compaction returned empty summary" : "compaction returned truncated summary"
+        log.error(detail, { sessionID: input.sessionID, agentID: input.agentID, length: summaryText.length })
+        processor.message.error = { name: "CompactionSummaryInvalid", data: { length: summaryText.length } } as never
         processor.message.finish = "error"
         yield* session.updateMessage(processor.message)
         return "stop"

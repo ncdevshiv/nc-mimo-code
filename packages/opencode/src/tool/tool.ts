@@ -1,11 +1,12 @@
 import z from "zod"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import type { MessageV2 } from "../session/message-v2"
 import type { Permission } from "../permission"
 import type { SessionID, MessageID } from "../session/schema"
 import * as Truncate from "./truncate"
 import { Agent } from "@/agent/agent"
 import { truncateError, MAX_VALIDATION_ERROR_CHARS } from "./truncate-error"
+import { Pressure } from "@/util"
 
 export interface Metadata {
   [key: string]: any
@@ -138,20 +139,45 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
             return result
           }
           const agent = yield* agents.get(ctx.agent)
-          const truncated = yield* truncate.output(result.output, {}, agent, id)
+          // Read the live pressure level (provided by the run loop in
+          // `session/prompt.ts` via `Pressure.withPressure`). When the
+          // tool runs outside that loop (tests, ad-hoc callers) the
+          // service is absent and we fall back to `undefined` (no
+          // cap halving).
+          const pressure = yield* Effect.serviceOption(Pressure.PressureService)
+          const level = pressure._tag === "Some" ? pressure.value.level : undefined
+          const truncated = yield* truncate.output(
+            result.output,
+            { pressureCaps: Pressure.shouldHalveCaps(level) },
+            agent,
+            id,
+          )
           return {
             ...result,
             output: truncated.content,
-            metadata: {
-              ...result.metadata,
-              truncated: truncated.truncated,
-              ...(truncated.truncated && { outputPath: truncated.outputPath }),
-            },
+            metadata: withTruncatedMetadata(result.metadata, truncated),
           }
         }).pipe(Effect.orDie, Effect.withSpan("Tool.execute", { attributes: attrs }))
       }
       return toolInfo
     })
+}
+
+/**
+ * Standardize the `metadata.truncated` / `metadata.outputPath` shape
+ * across tools that do their own truncation. Centralizes the
+ * "optional outputPath" guard so callers don't sprinkle `as const`
+ * ternaries everywhere.
+ */
+export function withTruncatedMetadata<M extends Metadata>(
+  base: M,
+  truncated: { truncated: boolean; outputPath?: string },
+): M {
+  return {
+    ...base,
+    truncated: truncated.truncated,
+    ...(truncated.truncated && truncated.outputPath ? { outputPath: truncated.outputPath } : {}),
+  } as M
 }
 
 export function define<Parameters extends z.ZodType, Result extends Metadata, R, ID extends string = string>(

@@ -7,8 +7,10 @@ import { assertExternalDirectoryEffect } from "./external-directory"
 import { SessionCwd } from "./session-cwd"
 import DESCRIPTION from "./grep.txt"
 import * as Tool from "./tool"
+import { BUDGET } from "@/config/tool-budget-resolve"
 
-const MAX_LINE_LENGTH = 2000
+const MAX_LINE_LENGTH = BUDGET.grep.maxLineLength
+const MAX_RESULTS = BUDGET.grep.maxResults
 
 export const GrepTool = Tool.define(
   "grep",
@@ -153,7 +155,7 @@ export const GrepTool = Tool.define(
 
           matches.sort((a, b) => b.mtime - a.mtime)
 
-          const limit = 100
+          const limit = MAX_RESULTS
           const truncated = matches.length > limit
           const final = truncated ? matches.slice(0, limit) : matches
           if (final.length === 0) return empty

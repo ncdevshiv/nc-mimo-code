@@ -1,14 +1,23 @@
 Read a file or directory from the local filesystem. If the path does not exist, an error is returned.
 
-Usage:
-- The filePath parameter should be an absolute path.
-- By default, this tool returns up to 2000 lines from the start of the file.
-- The offset parameter is the line number to start from (1-indexed).
-- To read later sections, call this tool again with a larger offset.
-- Use the grep tool to find specific content in large files or files with long lines.
-- If you are unsure of the correct file path, use the glob tool to look up filenames by glob pattern.
-- Contents are returned with each line prefixed by its line number as `<line>: <content>`. For example, if a file has contents "foo\n", you will receive "1: foo\n". For directories, entries are returned one per line (without line numbers) with a trailing `/` for subdirectories.
-- Any line longer than 2000 characters is truncated.
-- Call this tool in parallel when you know there are multiple files you want to read.
-- Avoid tiny repeated slices (30 line chunks). If you need more context, read a larger window.
-- This tool can read image files and PDFs and return them as file attachments.
+Parameters:
+- filePath (required, absolute path): the file or directory to read.
+- offset (optional, 1-indexed line number): start reading here. Default 1. Ignored if 'around' is set.
+- limit (optional, integer): max lines to return. Default 2000. Ignored if 'around' is set.
+- around (optional, 1-indexed line number): center the read window on this line. Overrides offset when set. Pairs naturally with grep: after finding a match, use around=<line> to see surrounding context.
+- ast (optional, "off" | "outline" | "symbols", default "off"): return a structural outline (functions/classes/exports) via the language server instead of raw content. 'outline' is a nested tree; 'symbols' is a flat list. Falls back to a plain text read if no LSP server is available for the file. Outline output is capped at 200 symbols / 50KB.
+- encoding (optional, "auto" | "utf-8" | "utf-16le" | "utf-16be" | "windows-1252" | "ascii", default "auto"): source encoding. 'auto' detects via BOM and heuristic; the detected value is reported in the <meta> header.
+- maxAttachmentBytes (optional, positive integer): override the 10MB cap on image/PDF attachments. Files larger than this are rejected with a clear error.
+- showIgnored (optional, boolean, default false): directory listings hide entries matched by .gitignore / .ignore / .nc-mimo-codeignore. Pass true to see them. Ignored for file reads.
+
+Output format:
+- Text files: a <meta> header (size, lines, encoding, language, modification time), then each line is prefixed `<line>: <content>`. Lines longer than 2000 chars are truncated. Output is capped at 50KB by default; use offset=N (or around=L with a larger limit) to continue.
+- Directories: one entry per line, with a trailing `/` for subdirectories. Counts and pagination hints are included. Ignored entries are hidden by default. Symlink cycles are skipped with a marker.
+- Images and PDFs: returned as base64 file attachments, hard-capped at 10MB (override via maxAttachmentBytes). The output text is a short success message; the bytes are in the attachment.
+- Outline mode: a list of symbols with their line ranges, capped at 200 entries / 50KB. Use ast=off to read raw content, or ast=outline with offset=N to read around a line.
+- Binary files: rejected with a clear error.
+
+Tips:
+- Use grep to find specific content, then read with `around=<line>` to see the surrounding context.
+- Use ast=outline to navigate a large file by structure (functions, classes, exports) without reading the whole thing.
+- Call this tool in parallel when you know multiple files are needed. Avoid tiny repeated slices; if you need more context, read a larger window.

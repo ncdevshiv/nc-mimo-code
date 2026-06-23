@@ -110,7 +110,11 @@ describe("Truncate", () => {
       Effect.gen(function* () {
         const svc = yield* Truncate.Service
         const lines = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n")
-        const result = yield* svc.output(lines, { maxLines: 10 })
+        // Explicitly disable the minThreshold so the file is always
+        // written regardless of overshoot size. Without this the
+        // new `minThresholdBytes` option would skip the write for
+        // small overshoots.
+        const result = yield* svc.output(lines, { maxLines: 10, minThresholdBytes: 0 })
 
         expect(result.truncated).toBe(true)
         expect(result.content).toContain("The tool call succeeded but the output was truncated")

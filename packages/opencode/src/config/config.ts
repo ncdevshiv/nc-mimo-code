@@ -37,6 +37,7 @@ import { ConfigMCP } from "./mcp"
 import { ConfigModelID } from "./model-id"
 import { ConfigLog } from "./log"
 import { ConfigMonitor } from "./monitor"
+import { ConfigToolBudget } from "./tool-budget"
 import { ConfigParse } from "./parse"
 import { ConfigPaths } from "./paths"
 import { ConfigPermission } from "./permission"
@@ -269,6 +270,10 @@ const InfoSchema = Schema.Struct({
   ).annotate({
     description: "Tool invocation style configuration (JSON vs shell-style).",
   }),
+  toolBudget: Schema.optional(ConfigToolBudget.Info).annotate({
+    description:
+      "Per-tool output budgets (maxBytes, maxLines, maxResults). Every field is optional — unset fields fall back to the hardcoded tool defaults. Use this to scale the agent for very large projects (10K+ files / 10M+ LOC) without rebuilding. See docs/tool-output-budgets.md for example profiles.",
+  }),
   enterprise: Schema.optional(
     Schema.Struct({
       url: Schema.optional(Schema.String).annotate({ description: "Enterprise URL" }),
@@ -291,6 +296,14 @@ const InfoSchema = Schema.Struct({
       }),
       reserved: Schema.optional(NonNegativeInt).annotate({
         description: "Token buffer for compaction. Leaves enough window to avoid overflow during compaction.",
+      }),
+      tokenEstimateDivisor: Schema.optional(Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0))).annotate({
+        description:
+          "Characters-per-token divisor used by `util/token.ts:estimate`. Lower = more tokens for the same text (more aggressive compaction). Default: 4.",
+      }),
+      fallbackAgent: Schema.optional(Schema.String).annotate({
+        description:
+          "Agent name to fall back to when the `compaction` agent is unavailable. If unset, the parent agent is used.",
       }),
     }),
   ),

@@ -41,6 +41,7 @@ import { McpAuth } from "@/mcp/auth"
 import { Command } from "@/command"
 import { Truncate } from "@/tool"
 import { ToolRegistry } from "@/tool"
+import { Pressure } from "@/util"
 import { Format } from "@/format"
 import { Project } from "@/project"
 import { Vcs } from "@/project"
@@ -122,6 +123,7 @@ export const AppLayer = Layer.suspend(() =>
     Command.defaultLayer,
     Truncate.defaultLayer,
     ToolRegistry.defaultLayer,
+    Pressure.defaultLayer,
     Format.defaultLayer,
     Project.defaultLayer,
     Vcs.defaultLayer,

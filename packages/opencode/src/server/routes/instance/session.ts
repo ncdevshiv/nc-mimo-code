@@ -671,6 +671,21 @@ export const SessionRoutes = lazy(() =>
             agentID: "main",
           })
           yield* prompt.loop({ sessionID })
+
+          // Surface compaction failures (e.g. summary validation
+          // rejected the LLM output) as an Effect failure so the
+          // jsonRequest wrapper renders it as HTTP 500 instead of
+          // silently returning success. We check the most-recent
+          // assistant message's `error` field which `processCompaction`
+          // populates on failure (overflow, invalid summary, etc.).
+          const messages = yield* session.messages({ sessionID }).pipe(Effect.catch(() => Effect.succeed([])))
+          const lastAssistant = messages.findLast((m) => m.info.role === "assistant")
+          if (lastAssistant && "error" in lastAssistant.info && lastAssistant.info.error) {
+            const errInfo = lastAssistant.info.error as { name?: string; data?: { message?: string } }
+            return yield* Effect.fail(
+              new Error(`compaction failed: ${errInfo.data?.message ?? errInfo.name ?? "unknown"}`),
+            )
+          }
           return true
         }),
     )
